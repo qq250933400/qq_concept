@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Debug/Profile 关闭沙箱：从终端 / CI 启动调试版时，macOS App Sandbox
+	     在没有 GUI 会话的环境下会因 libsecinit_appsandbox 直接 SIGTRAP 退出，
+	     导致 `flutter run -d macos` 报 "log reader stopped unexpectedly"。
+	     Release 仍使用 Release.entitlements 保留沙箱。 -->
+	<key>com.apple.security.app-sandbox</key>
+	<false/>
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+	<key>com.apple.security.network.server</key>
+	<true/>
+</dict>
+</plist>
