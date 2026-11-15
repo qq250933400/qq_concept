@@ -32,8 +32,7 @@ class TabFlip extends StatefulWidget {
   State<TabFlip> createState() => _TabFlipState();
 }
 
-class _TabFlipState extends State<TabFlip>
-    with SingleTickerProviderStateMixin {
+class _TabFlipState extends State<TabFlip> with SingleTickerProviderStateMixin {
   late final AnimationController _c = AnimationController(
     vsync: this,
     duration: widget.duration,
@@ -57,7 +56,7 @@ class _TabFlipState extends State<TabFlip>
   void didUpdateWidget(covariant TabFlip old) {
     super.didUpdateWidget(old);
     final int next = widget.index.clamp(0, widget.pages.length - 1);
-    if (next == _current && !_c.isAnimating) return;
+    if (next == _current) return;
     _from = _current;
     _current = next;
     _dir = next >= old.index ? 1 : -1;
@@ -81,8 +80,9 @@ class _TabFlipState extends State<TabFlip>
         }
         final double t = _curve.transform(_c.value);
         final bool showFrom = t < .5;
-        final Widget page =
-            showFrom ? widget.pages[_from] : widget.pages[_current];
+        final Widget page = showFrom
+            ? widget.pages[_from]
+            : widget.pages[_current];
         // 旧页 0 → ±90°；新页 ∓90° → 0°。
         final double angle =
             _dir * (showFrom ? t * math.pi : (t - 1) * math.pi);
@@ -107,11 +107,10 @@ class _TabFlipState extends State<TabFlip>
             // 竹叶容器的 Clip.hardEdge 裁掉，不产生 overflow 异常。
             child: Transform(
               origin: Offset(S.mainWinW / 2, S.bambooH / 2),
-              transform:
-                  Matrix4.identity()
-                    ..setEntry(3, 2, 0.0015)
-                    ..rotateY(angle)
-                    ..scaleByDouble(1 - .035 * edgeOn, 1 - .035 * edgeOn, 1, 1),
+              transform: Matrix4.identity()
+                ..setEntry(3, 2, 0.0015)
+                ..rotateY(angle)
+                ..scaleByDouble(1 - .035 * edgeOn, 1 - .035 * edgeOn, 1, 1),
               child: Stack(
                 clipBehavior: Clip.none,
                 children: [

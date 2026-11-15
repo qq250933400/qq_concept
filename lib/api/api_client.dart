@@ -23,7 +23,7 @@ class QApiClient {
       deviceId = qNewDeviceId(),
       _http = httpClient ?? http.Client();
 
-  final String baseUrl;
+  String baseUrl;
   final String deviceId;
   final http.Client _http;
 

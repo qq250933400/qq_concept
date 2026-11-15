@@ -29,6 +29,8 @@ abstract class QBackend {
 
   Future<void> setPresence(QPresence status);
 
+  Future<String> updateNickname(String nickname);
+
   // ---------------------------------------------------------------- 关系链
   /// 重新拉取分组 + 好友 + 收到的/发出的申请（登录、窗口打开、写操作后）。
   Future<void> refreshContacts();

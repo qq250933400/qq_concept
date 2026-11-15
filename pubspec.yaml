@@ -32,6 +32,11 @@ dependencies:
     sdk: flutter
   http: ^1.6.0
   web_socket_channel: ^3.0.3
+  sqlite3: ^3.9.1
+  path: ^1.9.0
+  path_provider: ^2.1.5
+  flutter_secure_storage: ^11.2.0
+  pointycastle: ^4.0.0
 
 dev_dependencies:
   flutter_test:
@@ -43,6 +48,11 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^5.0.0
+
+hooks:
+  user_defines:
+    sqlite3:
+      source: system
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

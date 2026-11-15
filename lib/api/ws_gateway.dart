@@ -15,7 +15,7 @@ class QWsGateway {
   QWsGateway({required String apiBase, required this.deviceId})
     : _wsUrl = qResolveWsUrl(apiBase);
 
-  final String _wsUrl;
+  String _wsUrl;
   final String deviceId;
 
   final StreamController<QFrame> _frames =
@@ -35,6 +35,11 @@ class QWsGateway {
 
   Stream<QFrame> get frames => _frames.stream;
   bool get connected => _connected;
+
+  void setApiBase(String apiBase) {
+    if (!_manuallyClosed) throw StateError('连接期间不能切换服务器');
+    _wsUrl = qResolveWsUrl(apiBase);
+  }
 
   Future<void> connect(Future<String> Function() tokenProvider) async {
     _tokenProvider = tokenProvider;

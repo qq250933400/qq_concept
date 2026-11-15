@@ -28,6 +28,8 @@ Widget buildQWindowContent(
         account: st.account,
         password: st.password,
         remember: st.remember,
+        presence: st.loginPresence,
+        onPresenceChanged: st.setLoginPresence,
         busy: st.apiBusy,
         statusText: st.apiBusy
             ? '正在连接服务…'
@@ -40,40 +42,53 @@ Widget buildQWindowContent(
         onRegister: st.openRegisterWindow,
         onMinimize: () => onWindowButton(QWinBtnKind.minimize),
         onClose: () => onWindowButton(QWinBtnKind.close),
+        onSettings: st.localStore == null ? null : st.openSettingsWindow,
       );
 
     case QWindowKind.register:
       return RegisterScreen(state: st, onButtonTap: onWindowButton);
 
     case QWindowKind.panel:
-      final panel = MainPanel(
-        tab: st.panelTab,
-        onTabChanged: st.setPanelTab,
-        menuOpen: st.panelMenu,
-        onDismissMenu: st.toggleMainMenu,
-        onFriendTap: st.selectFriend,
-        onMenuAction: st.handleMenuAction,
-        onFooterAction: st.handleMenuAction,
-        onWindowButton: onWindowButton,
-        onSearchChanged: st.setSearchQuery,
-        // 主面板「+」：打开好友管理窗口并直接进入添加好友流程。
-        onAddTap: st.openAddFriend,
-        onGroupTap: st.toggleGroup,
-        onMainMenuTap: st.toggleMainMenu,
-        selectedName: st.activeFriend,
-        searchQuery: st.searchQuery,
-        expandedGroup: st.expandedGroup,
-        friendGroups: st.friendGroups,
-        friends: st.friends,
-        myPresence: st.visibleMyPresence,
-        friendPresence: st.backend == null
-            ? null
-            : (st.backendConnected ? st.presence : const <String, QPresence>{}),
-        onPresenceChanged: st.presenceBusy ? null : st.changePresence,
-        displayName: st.backend == null ? 'wzw' : st.displayName,
-        signature: st.backend == null ? '若不在连，请留言或邮件至' : st.signature,
-        // 注册时选的内置头像登录后显示在左上角相框（null = 设计稿默认剪影）。
-        myAvatarIndex: st.myAvatarIndex,
+      final panel = Builder(
+        builder: (context) => MainPanel(
+          tab: st.panelTab,
+          onTabChanged: st.setPanelTab,
+          menuOpen: st.panelMenu,
+          onDismissMenu: st.toggleMainMenu,
+          onFriendTap: st.selectFriend,
+          onMenuAction: st.handleMenuAction,
+          onFooterAction: st.handleMenuAction,
+          onWindowButton: onWindowButton,
+          onSearchChanged: st.setSearchQuery,
+          // 主面板「+」：打开好友管理窗口并直接进入添加好友流程。
+          onAddTap: st.openAddFriend,
+          onGroupTap: st.toggleGroup,
+          onMainMenuTap: st.toggleMainMenu,
+          onNicknameTap: st.backend == null
+              ? null
+              : () => showDialog<void>(
+                  context: context,
+                  builder: (_) => _NicknameDialog(state: st),
+                ),
+          selectedName: st.activeFriend,
+          searchQuery: st.searchQuery,
+          expandedGroup: st.expandedGroup,
+          friendGroups: st.friendGroups,
+          friends: st.friends,
+          recentChats: st.recentChats,
+          unreadCounts: st.unreadCounts,
+          myPresence: st.visibleMyPresence,
+          friendPresence: st.backend == null
+              ? null
+              : (st.backendConnected
+                    ? st.presence
+                    : const <String, QPresence>{}),
+          onPresenceChanged: st.presenceBusy ? null : st.changePresence,
+          displayName: st.backend == null ? 'wzw' : st.displayName,
+          signature: st.backend == null ? '若不在连，请留言或邮件至' : st.signature,
+          // 注册时选的内置头像登录后显示在左上角相框（null = 设计稿默认剪影）。
+          myAvatarIndex: st.myAvatarIndex,
+        ),
       );
       // 设置页作为面板背面：绕 Y 轴 3D 翻转进入，返回键反向翻回。
       return PanelFlip(
@@ -114,6 +129,77 @@ Widget buildQWindowContent(
   }
 }
 
+class _NicknameDialog extends StatefulWidget {
+  const _NicknameDialog({required this.state});
+
+  final QAppState state;
+
+  @override
+  State<_NicknameDialog> createState() => _NicknameDialogState();
+}
+
+class _NicknameDialogState extends State<_NicknameDialog> {
+  late final TextEditingController _controller = TextEditingController(
+    text: widget.state.displayName,
+  );
+  String? _error;
+  bool _busy = false;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    if (_busy) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await widget.state.changeNickname(_controller.text);
+      if (mounted) Navigator.of(context).pop();
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _error = error.toString().replaceFirst(
+            RegExp(r'^(Exception|FormatException|Bad state): '),
+            '',
+          );
+          _busy = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 24),
+      title: const Text('修改昵称'),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        maxLength: 32,
+        enabled: !_busy,
+        decoration: InputDecoration(labelText: '昵称', errorText: _error),
+        onSubmitted: (_) => _save(),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _busy ? null : () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        TextButton(
+          onPressed: _busy ? null : _save,
+          child: Text(_busy ? '保存中' : '保存'),
+        ),
+      ],
+    );
+  }
+}
+
 /// 设置页。两种承载方式：
 /// - [flipped] true：作为主面板背面（窗口内 3D 翻转），返回/保存都翻回面板；
 /// - false：独立设置窗口（顶栏快捷入口、任务栏、`#settings` 预设）。
@@ -132,13 +218,19 @@ Widget _settings(
       'sendCtrlEnter': st.sendCtrlEnter,
     },
     onToggle: st.setSetting,
-    onSave: () {
-      st.commitSettings();
-      st.flash('设置已保存');
-      if (flipped) {
-        st.closePanelSettings();
-      } else {
-        onWindowButton(QWinBtnKind.close);
+    localStore: st.localStore,
+    loggedIn: st.loggedIn,
+    onSave: () async {
+      try {
+        await st.commitSettings();
+        st.flash('设置已保存');
+        if (flipped) {
+          st.closePanelSettings();
+        } else {
+          onWindowButton(QWinBtnKind.close);
+        }
+      } catch (error) {
+        st.flash('保存设置失败：$error');
       }
     },
     onCancel: () {

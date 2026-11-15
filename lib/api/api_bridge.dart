@@ -43,6 +43,7 @@ class QApiBridge implements QBackend {
   final Map<String, QPresence> _presenceById = <String, QPresence>{};
   final Map<String, int> _presenceRevisionById = <String, int>{};
   int _presenceRevision = 0;
+  int _friendsLoadRevision = 0;
   DateTime? _expiresAt;
   int _localSeq = 0;
   Future<void> _contactsQueue = Future<void>.value();
@@ -56,8 +57,19 @@ class QApiBridge implements QBackend {
   }
 
   // ------------------------------------------------------------ 认证
+  Future<void> _configureServer() async {
+    final local = state.localStore;
+    if (local != null && client.baseUrl != local.settings.server) {
+      await ws.close();
+      client.clearTokens();
+      client.baseUrl = local.settings.server;
+      ws.setApiBase(client.baseUrl);
+    }
+  }
+
   @override
   Future<void> login(String account, String password) async {
+    await _configureServer();
     final json = await client.login(account, password);
     _resetCaches();
     _expiresAt = DateTime.now().add(
@@ -66,6 +78,8 @@ class QApiBridge implements QBackend {
       ),
     );
     await _bootstrap();
+    await client.setPresence(state.loginPresence.name);
+    state.setBackendMyPresence(state.loginPresence);
     _log(
       '登录成功：${state.friends.length} 位好友 / '
       '${state.friendGroups?.length ?? 0} 个分组 / '
@@ -78,6 +92,7 @@ class QApiBridge implements QBackend {
 
   @override
   Future<void> register(QRegistration reg) async {
+    await _configureServer();
     final account = reg.account.trim();
     // 注册资料：昵称为空时服务端约定回落为帐号；头像存内置标识串。
     await client.register(
@@ -99,6 +114,16 @@ class QApiBridge implements QBackend {
     _resetCaches();
   }
 
+  @override
+  Future<String> updateNickname(String nickname) async {
+    final result = await client.updateMe(nickname: nickname);
+    final updated = result['nickname'];
+    if (updated is! String || updated.isEmpty) {
+      throw const QApiException(500, 'BAD_RESPONSE', '修改昵称响应无效');
+    }
+    return updated;
+  }
+
   void _resetCaches() {
     _friendIdByName.clear();
     _friendNameById.clear();
@@ -110,6 +135,7 @@ class QApiBridge implements QBackend {
     _presenceById.clear();
     _presenceRevisionById.clear();
     _presenceRevision = 0;
+    _friendsLoadRevision++;
     _expiresAt = null;
   }
 
@@ -136,7 +162,19 @@ class QApiBridge implements QBackend {
     } catch (_) {
       // 申请列表拉取失败不影响登录主流程，打开好友管理时会再拉一次。
     }
+    await _loadMyProfile();
+  }
+
+  Future<void> _loadMyProfile() async {
     final me = await client.me();
+    _cache('profile', me.id, {
+      'id': me.id,
+      'account': me.account,
+      'nickname': me.nickname,
+      'signature': me.signature,
+      'avatar_url': me.avatarUrl,
+      'gender': me.gender,
+    });
     state.setBackendNickname(me.nickname.isEmpty ? me.account : me.nickname);
     state.setBackendSignature(me.signature ?? '');
     state.setBackendMyPresence(_parsePresence(me.presence, QPresence.online));
@@ -144,13 +182,20 @@ class QApiBridge implements QBackend {
   }
 
   Future<void> _loadFriends() async {
+    final loadRevision = ++_friendsLoadRevision;
     final snapshotRevision = _presenceRevision;
     final json = await client.friends();
+    if (loadRevision != _friendsLoadRevision) return;
+    _cache('friends', 'list', json);
     final groups = qList(json['groups']).map(ApiGroup.fromJson).toList()
       ..sort((a, b) => a.sort.compareTo(b.sort));
     final items = qList(json['items']).map(ApiFriend.fromJson).toList();
-    _friendIdByName.clear();
-    _friendNameById.clear();
+    for (final friend in items) {
+      _renamePeer(friend.id, friend.nickname);
+    }
+    final conversationNames = _friendByConv.values.toSet();
+    _friendIdByName.removeWhere((name, _) => !conversationNames.contains(name));
+    _friendNameById.removeWhere((_, name) => !conversationNames.contains(name));
     for (final f in items) {
       _friendIdByName[f.nickname] = f.id;
       _friendNameById[f.id] = f.nickname;
@@ -159,7 +204,8 @@ class QApiBridge implements QBackend {
       }
     }
     state.applyBackendPresence({
-      for (final f in items) f.nickname: _presenceById[f.id] ?? QPresence.offline,
+      for (final f in items)
+        f.nickname: _presenceById[f.id] ?? QPresence.offline,
     });
 
     final knownGroups = groups.map((g) => g.id).toSet();
@@ -228,10 +274,13 @@ class QApiBridge implements QBackend {
       if (name.isEmpty) continue;
       _convByFriend[name] = conv.id;
       _friendByConv[conv.id] = name;
+      _friendIdByName[name] = conv.peerId;
+      _friendNameById[conv.peerId] = name;
       _seqByConv[conv.id] = math.max(_seqByConv[conv.id] ?? 0, conv.lastSeq);
+      state.applyUnreadSnapshot(name, conv.unread, conv.lastSeq, conv.readSeq);
       final history = await client.messages(conv.id, limit: 50);
       final messages = _parseMessages(history);
-      state.mergeBackendThread(name, messages);
+      state.mergeBackendThread(_friendByConv[conv.id] ?? name, messages);
     }
   }
 
@@ -243,7 +292,25 @@ class QApiBridge implements QBackend {
       if (conv.id.isEmpty || name.isEmpty) continue;
       _convByFriend[name] = conv.id;
       _friendByConv[conv.id] = name;
+      _friendIdByName[name] = conv.peerId;
+      _friendNameById[conv.peerId] = name;
+      state.applyUnreadSnapshot(name, conv.unread, conv.lastSeq, conv.readSeq);
     }
+  }
+
+  void _renamePeer(String id, String name) {
+    final old = _friendNameById[id];
+    if (old == null || old == name || name.isEmpty) return;
+    state.renameBackendFriend(old, name);
+    if (_friendIdByName[old] == id) _friendIdByName.remove(old);
+    _friendIdByName[name] = id;
+    _friendNameById[id] = name;
+    final conv = _convByFriend.remove(old);
+    if (conv != null) {
+      _convByFriend[name] = conv;
+      _friendByConv[conv] = name;
+    }
+    _clientMsgToFriend.updateAll((_, value) => value == old ? name : value);
   }
 
   Future<void> _loadSettings() async {
@@ -263,7 +330,12 @@ class QApiBridge implements QBackend {
         values[key] = v == true || v == 1 || v == 'true';
       }
     }
-    if (values.isNotEmpty) state.applyBackendSettings(values);
+    final local = state.localStore?.settings.options;
+    if (local != null && local.isNotEmpty) {
+      state.applyBackendSettings(local);
+    } else if (values.isNotEmpty) {
+      state.applyBackendSettings(values);
+    }
   }
 
   @override
@@ -425,10 +497,11 @@ class QApiBridge implements QBackend {
     if (convId.isEmpty) {
       throw const QApiException(500, 'BAD_RESPONSE', '创建会话失败');
     }
-    _convByFriend[friendName] = convId;
-    _friendByConv[convId] = friendName;
-    _friendIdByName[friendName] = peerId;
-    _friendNameById[peerId] = friendName;
+    final name = _friendNameById[peerId] ?? friendName;
+    _convByFriend[name] = convId;
+    _friendByConv[convId] = name;
+    _friendIdByName[name] = peerId;
+    _friendNameById[peerId] = name;
     return convId;
   }
 
@@ -437,23 +510,31 @@ class QApiBridge implements QBackend {
     final convId = await _ensureConversation(friendName);
     final history = await client.messages(convId, limit: 50);
     final messages = _parseMessages(history);
-    state.mergeBackendThread(friendName, messages);
+    state.mergeBackendThread(_friendByConv[convId] ?? friendName, messages);
     int last = 0;
     for (final m in messages) {
       last = math.max(last, m.seq ?? 0);
     }
     _seqByConv[convId] = math.max(_seqByConv[convId] ?? 0, last);
-    if (last > 0) await client.markRead(convId, last);
+    if (last > 0) await _markRead(convId, friendName, last);
+  }
+
+  Future<void> _markRead(String convId, String friend, int seq) async {
+    final response = await client.markRead(convId, seq);
+    final readSeq = int.tryParse(response['read_seq']?.toString() ?? '');
+    if (readSeq == null) throw const FormatException('已读响应缺少序号');
+    state.markConversationRead(_friendByConv[convId] ?? friend, readSeq);
   }
 
   @override
   Future<void> send(String friendName, String text) async {
     final convId = await _ensureConversation(friendName);
+    final name = _friendByConv[convId] ?? friendName;
     final cid = 'd-${DateTime.now().microsecondsSinceEpoch}-${++_localSeq}';
-    _clientMsgToFriend[cid] = friendName;
+    _clientMsgToFriend[cid] = name;
     // 乐观插入：即使 WS 暂时断开，用户也能立刻看到自己发出的内容。
     state.addBackendMessage(
-      friendName,
+      name,
       QMessage(text, true, DateTime.now(), clientMsgId: cid, pending: true),
     );
     ws.send('msg.send', <String, dynamic>{
@@ -469,6 +550,7 @@ class QApiBridge implements QBackend {
     final result = <QMessage>[];
     for (final raw in qList(json['items'])) {
       final m = ApiMessage.fromJson(raw);
+      if (m.id.isNotEmpty) _cache('message', m.id, raw);
       _seenIds.add(m.id);
       result.add(_toQMessage(m));
     }
@@ -489,13 +571,21 @@ class QApiBridge implements QBackend {
       case 'ready':
         final seqs = f.data['seqs'];
         _runFrameTask(refreshContacts(), '刷新好友列表');
+        _runFrameTask(_loadMyProfile(), '刷新个人资料');
         if (seqs is Map) {
-          _runFrameTask(_catchUp(Map<String, dynamic>.from(seqs)), '同步消息');
+          _runFrameTask(
+            _syncConversations(Map<String, dynamic>.from(seqs)),
+            '同步消息',
+          );
         }
       case 'msg.ack':
         _onAck(f.data);
       case 'msg.new':
         _runFrameTask(_onNew(f.data), '接收消息');
+      case 'msg.read':
+        if (f.data['user_id']?.toString() == client.userId) {
+          _runFrameTask(_onRead(f.data), '同步已读状态');
+        }
       case 'presence':
         final id = f.data['user_id']?.toString();
         final status = QPresence.parse(f.data['status']?.toString());
@@ -522,6 +612,12 @@ class QApiBridge implements QBackend {
         _runFrameTask(_onFriendRejected(f.data), '刷新好友申请');
       case 'friend.deleted':
         _runFrameTask(_onFriendDeleted(f.data), '刷新好友列表');
+      case 'user.profile_changed':
+        if (f.data['user_id']?.toString() == client.userId) {
+          _runFrameTask(_loadMyProfile(), '刷新个人资料');
+        } else {
+          _runFrameTask(refreshContacts(), '刷新好友资料');
+        }
       case 'error':
         state.flash('服务端返回错误：${f.data['code'] ?? 'UNKNOWN'}');
       default:
@@ -572,17 +668,50 @@ class QApiBridge implements QBackend {
     if (cid == null) return;
     final friend = _clientMsgToFriend.remove(cid);
     final seq = int.tryParse(data['seq']?.toString() ?? '') ?? 0;
-    if (friend != null) state.confirmBackendMessage(friend, cid, seq);
     final conv = _convByFriend[friend];
-    if (conv != null) {
-      _seqByConv[conv] = math.max(_seqByConv[conv] ?? 0, seq);
+    if (friend != null && conv != null && data['msg_id'] != null) {
+      final matches = state.thread(friend).where((m) => m.clientMsgId == cid);
+      if (matches.isNotEmpty) {
+        _cache('message', data['msg_id'].toString(), {
+          'id': data['msg_id'],
+          'conversation_id': conv,
+          'sender_id': client.userId,
+          'seq': seq,
+          'client_msg_id': cid,
+          'created_at': data['created_at'],
+          'content': {'text': matches.first.text},
+        });
+      }
     }
+    if (friend != null) state.confirmBackendMessage(friend, cid, seq);
+    if (conv != null) {
+      _advanceLiveSeq(conv, seq);
+    }
+  }
+
+  void _advanceLiveSeq(String convId, int seq) {
+    final current = _seqByConv[convId] ?? 0;
+    if (seq == current + 1) _seqByConv[convId] = seq;
+  }
+
+  Future<void> _onRead(Map<String, dynamic> data) async {
+    final convId = data['conversation_id']?.toString() ?? '';
+    final seq = int.tryParse(data['up_to_seq']?.toString() ?? '');
+    if (convId.isEmpty || seq == null) {
+      throw const FormatException('已读通知无效');
+    }
+    if (!_friendByConv.containsKey(convId)) await _loadConversationMappings();
+    final friend = _friendByConv[convId];
+    if (friend == null) throw StateError('无法找到已读消息对应的会话');
+    state.markConversationRead(friend, seq);
+    await _loadConversationMappings();
   }
 
   Future<void> _onNew(Map<String, dynamic> data) async {
     final raw = data['message'];
     if (raw is! Map) return;
     final m = ApiMessage.fromJson(Map<String, dynamic>.from(raw));
+    if (m.id.isNotEmpty) _cache('message', m.id, raw);
     if (m.text.isEmpty && m.revoked) return;
     if (m.id.isNotEmpty && !_seenIds.add(m.id)) return;
 
@@ -597,6 +726,7 @@ class QApiBridge implements QBackend {
         _seenIds.remove(m.id);
         rethrow;
       }
+
       friend = _friendByConv[convId] ?? _friendNameById[m.senderId];
     }
     if (friend == null) {
@@ -604,7 +734,7 @@ class QApiBridge implements QBackend {
       throw StateError('无法找到消息对应的会话');
     }
     _convByFriend[friend] = convId;
-    _seqByConv[convId] = math.max(_seqByConv[convId] ?? 0, m.seq);
+    _advanceLiveSeq(convId, m.seq);
 
     final self = m.senderId == client.userId;
     if (self && m.clientMsgId != null) {
@@ -617,7 +747,27 @@ class QApiBridge implements QBackend {
     }
     state.addBackendMessage(friend, _toQMessage(m));
     _log('收到 ${self ? '多端同步' : '新'}消息 ← $friend (seq=${m.seq})');
-    if (!self) state.notifyIncoming('新消息', '$friend 发来一条消息', friend: friend);
+    if (!self) {
+      state.addUnread(friend, m.seq);
+      state.notifyIncoming('新消息', '$friend 发来一条消息', friend: friend);
+      if (state.isChatVisible(friend)) await _markRead(convId, friend, m.seq);
+    }
+  }
+
+  void _cache(String kind, String id, Object data) {
+    final userId = client.userId;
+    final store = state.localStore;
+    if (store == null || userId == null || userId.isEmpty || id.isEmpty) return;
+    try {
+      store.cache(client.baseUrl, userId, kind, id, data);
+    } on Exception catch (error) {
+      state.flash('保存本地数据失败：$error');
+    }
+  }
+
+  Future<void> _syncConversations(Map<String, dynamic> seqs) async {
+    await _loadConversationMappings();
+    await _catchUp(seqs);
   }
 
   /// `ready.seqs` 与本地已见 seq 比较，只补断线期间的增量。
@@ -628,19 +778,37 @@ class QApiBridge implements QBackend {
     for (final entry in seqs.entries) {
       final convId = entry.key.toString();
       final remote = int.tryParse(entry.value?.toString() ?? '') ?? 0;
-      final local = _seqByConv[convId] ?? 0;
-      if (remote <= local) continue;
-      final json = await client.messages(convId, afterSeq: local, limit: 100);
-      for (final raw in qList(json['items'])) {
-        final m = ApiMessage.fromJson(raw);
-        final friend = _friendByConv[convId] ?? _friendNameById[m.senderId];
-        if (friend == null) throw StateError('无法找到消息对应的会话');
-        _seqByConv[convId] = math.max(_seqByConv[convId] ?? 0, m.seq);
-        if (m.id.isNotEmpty && !_seenIds.add(m.id)) continue;
-        state.addBackendMessage(friend, _toQMessage(m));
-        if (m.senderId != client.userId) {
-          state.notifyIncoming('新消息', '$friend 发来一条消息', friend: friend);
+      var cursor = _seqByConv[convId] ?? 0;
+      var readThrough = 0;
+      String? readFriend;
+      while (cursor < remote) {
+        final json = await client.messages(
+          convId,
+          afterSeq: cursor,
+          limit: 100,
+        );
+        final previous = cursor;
+        for (final raw in qList(json['items'])) {
+          final m = ApiMessage.fromJson(raw);
+          cursor = math.max(cursor, m.seq);
+          final friend = _friendByConv[convId] ?? _friendNameById[m.senderId];
+          if (friend == null) throw StateError('无法找到消息对应的会话');
+          if (m.id.isNotEmpty && !_seenIds.add(m.id)) continue;
+          state.addBackendMessage(friend, _toQMessage(m));
+          if (m.senderId != client.userId) {
+            state.addUnread(friend, m.seq);
+            state.notifyIncoming('新消息', '$friend 发来一条消息', friend: friend);
+            if (state.isChatVisible(friend)) {
+              readThrough = math.max(readThrough, m.seq);
+              readFriend = friend;
+            }
+          }
         }
+        if (cursor == previous) throw StateError('同步消息时序号未前进');
+        _seqByConv[convId] = math.max(_seqByConv[convId] ?? 0, cursor);
+      }
+      if (readThrough > 0 && readFriend != null) {
+        await _markRead(convId, readFriend, readThrough);
       }
     }
   }

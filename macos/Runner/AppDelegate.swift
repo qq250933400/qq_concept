@@ -30,6 +30,7 @@ private class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
 class AppDelegate: FlutterAppDelegate {
   var engine: FlutterEngine?
   private var windowChannel: FlutterMethodChannel?
+  private var statusItem: NSStatusItem?
   private let notificationDelegate = NotificationDelegate()
   private var shakingWindows = Set<ObjectIdentifier>()
 
@@ -81,6 +82,7 @@ class AppDelegate: FlutterAppDelegate {
     }
 
     guard let engine = engine else { return }
+    RegisterGeneratedPlugins(registry: engine)
     let channel = FlutterMethodChannel(
       name: "qq_concept/windows",
       binaryMessenger: engine.binaryMessenger)
@@ -88,9 +90,83 @@ class AppDelegate: FlutterAppDelegate {
     channel.setMethodCallHandler { [weak self] call, result in
       self?.handleWindowCall(call, result: result)
     }
+    setupStatusItem()
+  }
+
+  private func setupStatusItem() {
+    let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+    guard let button = item.button else {
+      NSLog("[QQ] 无法创建菜单栏图标")
+      NSStatusBar.system.removeStatusItem(item)
+      return
+    }
+    button.image = NSImage(systemSymbolName: "message.fill", accessibilityDescription: "QQ")
+    button.imagePosition = .imageLeft
+    button.title = "QQ"
+    button.toolTip = "QQ"
+    let menu = NSMenu()
+    let show = NSMenuItem(title: "打开 QQ", action: #selector(showFromStatusItem), keyEquivalent: "")
+    show.target = self
+    menu.addItem(show)
+    menu.addItem(.separator())
+    let quit = NSMenuItem(title: "退出 QQ", action: #selector(quitFromStatusItem), keyEquivalent: "")
+    quit.target = self
+    menu.addItem(quit)
+    item.menu = menu
+    statusItem = item
+  }
+
+  @objc private func showFromStatusItem() {
+    windowChannel?.invokeMethod("showFromTray", arguments: nil)
+  }
+
+  @objc private func quitFromStatusItem() {
+    NSApp.terminate(nil)
   }
 
   private func handleWindowCall(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+    if call.method == "chooseDataDirectory" {
+      let panel = NSOpenPanel()
+      panel.canChooseDirectories = true
+      panel.canChooseFiles = false
+      panel.allowsMultipleSelection = false
+      panel.prompt = "选择"
+      panel.begin { response in
+        guard response == .OK, let url = panel.url else {
+          result(nil)
+          return
+        }
+        do {
+          let bookmark = try url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil)
+          guard url.startAccessingSecurityScopedResource() else {
+            throw NSError(domain: "QQ", code: 1, userInfo: [NSLocalizedDescriptionKey: "无法访问所选目录"])
+          }
+          result(["path": url.path, "bookmark": bookmark.base64EncodedString()])
+        } catch {
+          result(FlutterError(code: "DIRECTORY_ACCESS", message: error.localizedDescription, details: nil))
+        }
+      }
+      return
+    }
+    if call.method == "restoreDataDirectory" {
+      guard let args = call.arguments as? [String: Any],
+            let encoded = args["bookmark"] as? String,
+            let data = Data(base64Encoded: encoded) else {
+        result(FlutterError(code: "DIRECTORY_ACCESS", message: "目录授权无效", details: nil))
+        return
+      }
+      do {
+        var stale = false
+        let url = try URL(resolvingBookmarkData: data, options: .withSecurityScope, relativeTo: nil, bookmarkDataIsStale: &stale)
+        guard !stale, url.startAccessingSecurityScopedResource() else {
+          throw NSError(domain: "QQ", code: 2, userInfo: [NSLocalizedDescriptionKey: "目录授权已失效，请重新选择"])
+        }
+        result(nil)
+      } catch {
+        result(FlutterError(code: "DIRECTORY_ACCESS", message: error.localizedDescription, details: nil))
+      }
+      return
+    }
     if call.method == "notify" {
       guard let args = call.arguments as? [String: Any],
             let title = args["title"] as? String,
@@ -162,6 +238,14 @@ class AppDelegate: FlutterAppDelegate {
           _ = window.perform(selector, with: event)
         }
       }
+      result(nil)
+    case "hide":
+      window.orderOut(nil)
+      result(nil)
+    case "show":
+      if window.isMiniaturized { window.deminiaturize(nil) }
+      NSApp.activate(ignoringOtherApps: true)
+      window.makeKeyAndOrderFront(nil)
       result(nil)
     default:
       result(FlutterMethodNotImplemented)

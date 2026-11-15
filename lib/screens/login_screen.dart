@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../core/models.dart';
 import '../core/tokens.dart';
 import '../core/window_chrome.dart';
 import '../core/widgets.dart';
@@ -25,6 +26,9 @@ class LoginScreen extends StatefulWidget {
     this.onRegister,
     this.onMinimize,
     this.onClose,
+    this.onSettings,
+    this.presence = QPresence.online,
+    this.onPresenceChanged,
     this.busy = false,
     this.statusText,
     this.statusError = false,
@@ -41,6 +45,9 @@ class LoginScreen extends StatefulWidget {
   final VoidCallback? onRegister;
   final VoidCallback? onMinimize;
   final VoidCallback? onClose;
+  final VoidCallback? onSettings;
+  final QPresence presence;
+  final ValueChanged<QPresence>? onPresenceChanged;
 
   /// 真实 API 模式：登录请求进行中禁用按钮，并在窗口底部显示错误 / 状态。
   final bool busy;
@@ -395,25 +402,46 @@ class _LoginScreenState extends State<LoginScreen>
             bottom: S.loginBtnBottom,
             child: Stack(
               children: [
-                BeigeButton(
-                  label: '',
-                  width: S.loginStatusW,
-                  height: S.loginBtnH,
-                  radius: const BorderRadius.horizontal(
-                    left: Radius.circular(4),
-                  ),
-                  leading: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const GreenDot(size: 13),
-                      const SizedBox(width: 4),
-                      QTriangle(
-                        width: 8,
-                        height: 5,
-                        dir: QTriDir.down,
-                        color: const Color(0xFF333333),
+                PopupMenuButton<QPresence>(
+                  key: const ValueKey('login-presence-selector'),
+                  tooltip: '选择登录状态',
+                  enabled: !widget.busy && widget.onPresenceChanged != null,
+                  padding: EdgeInsets.zero,
+                  initialValue: widget.presence,
+                  onSelected: widget.onPresenceChanged,
+                  itemBuilder: (_) => [
+                    for (final status in QPresence.values)
+                      PopupMenuItem(
+                        value: status,
+                        child: Row(
+                          children: [
+                            _statusDot(status),
+                            const SizedBox(width: 8),
+                            Text(status.label),
+                          ],
+                        ),
                       ),
-                    ],
+                  ],
+                  child: BeigeButton(
+                    label: '',
+                    width: S.loginStatusW,
+                    height: S.loginBtnH,
+                    radius: const BorderRadius.horizontal(
+                      left: Radius.circular(4),
+                    ),
+                    leading: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _statusDot(widget.presence),
+                        const SizedBox(width: 4),
+                        QTriangle(
+                          width: 8,
+                          height: 5,
+                          dir: QTriDir.down,
+                          color: const Color(0xFF333333),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
                 // 抹掉右边框，使与「登录」之间只剩一条竖线
@@ -466,10 +494,30 @@ class _LoginScreenState extends State<LoginScreen>
                 ),
               ),
             ),
+          if (widget.onSettings != null)
+            Positioned(
+              right: 8,
+              top: 37,
+              child: InkWell(
+                key: const ValueKey('login-settings'),
+                onTap: widget.busy ? null : widget.onSettings,
+                child: Text('服务器设置', style: QText.of(10)),
+              ),
+            ),
         ],
       ),
     );
   }
+
+  Widget _statusDot(QPresence status) => Container(
+    width: 13,
+    height: 13,
+    decoration: BoxDecoration(
+      color: status.color,
+      shape: BoxShape.circle,
+      border: Border.all(color: const Color(0x99FFFFFF)),
+    ),
+  );
 }
 
 // ============================================================================

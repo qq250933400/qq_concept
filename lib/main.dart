@@ -5,6 +5,7 @@ import 'api/api_config.dart';
 import 'app_shell.dart';
 import 'core/app_state.dart';
 import 'core/app_theme.dart';
+import 'core/local_settings.dart';
 import 'frontend/desktop.dart';
 import 'frontend/native_windows.dart';
 
@@ -53,7 +54,7 @@ List<String> _readInitialChats() => _kInitialChats.isEmpty
 /// - 桌面窗口化（macOS + master + `--enable-windowing`）：`runWidget` +
 ///   [ViewCollection]，根只有内容窗口，**没有控制台宿主窗口**；
 /// - web / 其余平台：`runApp`，保持单画布浮动桌面（用于对照与回归）。
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final windowing = QNativeWindows.isSupported;
   // 桌面版按真实产品流程起步：未登录 → 只有登录窗。web 仍按 URL 预设。
@@ -61,6 +62,16 @@ void main() {
       ? _kPresetOverride
       : (windowing ? 'login' : _readPreset());
   final state = QAppState(preset: preset);
+  if (preset == 'login' || preset == 'register') {
+    try {
+      state.localStore = await openLocalStore(qResolveApiBase());
+      final options = state.localStore?.settings.options;
+      if (options != null) state.applyBackendSettings(options);
+    } catch (error) {
+      state.localStorageError = '本地设置加载失败：$error';
+      state.authError = state.localStorageError;
+    }
+  }
   // 只有「从登录窗起步」的真实产品流程接后端；#demo/#main 等 URL 预设
   // 仍是设计稿画廊，保持纯本地数据，方便逐屏对照与离线演示。
   if (kApiEnabled && (preset == 'login' || preset == 'register')) {
@@ -165,9 +176,7 @@ class _QQConceptAppState extends State<QQConceptApp> {
     if (_kAutoLogin && !_state.loggedIn) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
-        _state.setPassword(
-          kDemoPassword.isNotEmpty ? kDemoPassword : 'demo',
-        );
+        _state.setPassword(kDemoPassword.isNotEmpty ? kDemoPassword : 'demo');
         _state.login();
       });
     }

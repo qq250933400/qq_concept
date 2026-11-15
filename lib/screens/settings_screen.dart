@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 
+import '../core/local_settings.dart';
 import '../core/tokens.dart';
 import '../core/widgets.dart';
 
@@ -15,6 +18,8 @@ class SettingsScreen extends StatelessWidget {
     this.onSave,
     this.onCancel,
     this.onButtonTap,
+    this.localStore,
+    this.loggedIn = false,
   });
 
   /// key: autoStart / alwaysOnTop / autoHide / sound / sendCtrlEnter
@@ -23,6 +28,8 @@ class SettingsScreen extends StatelessWidget {
   final VoidCallback? onSave;
   final VoidCallback? onCancel;
   final void Function(QWinBtnKind kind)? onButtonTap;
+  final QLocalStore? localStore;
+  final bool loggedIn;
 
   bool _v(String key, bool fallback) => values[key] ?? fallback;
 
@@ -69,6 +76,24 @@ class SettingsScreen extends StatelessWidget {
             // 2 个单选框项
             _radioItem(296, '按 Ctrl + Enter 键', 'sendCtrlEnter', true),
             _radioItem(334, '按 Enter 键', 'sendCtrlEnter', false),
+            if (localStore != null)
+              Positioned(
+                left: 14,
+                top: 384,
+                child: MetalButton(
+                  label: '服务器与存储位置',
+                  dark: true,
+                  width: 180,
+                  height: 27,
+                  onTap: () => showDialog<void>(
+                    context: context,
+                    builder: (_) => _LocalSettingsDialog(
+                      store: localStore!,
+                      loggedIn: loggedIn,
+                    ),
+                  ),
+                ),
+              ),
             // 底部按钮
             Positioned(
               left: 44,
@@ -209,4 +234,130 @@ class SettingsScreen extends StatelessWidget {
       ),
     );
   }
+}
+
+class _LocalSettingsDialog extends StatefulWidget {
+  const _LocalSettingsDialog({required this.store, required this.loggedIn});
+  final QLocalStore store;
+  final bool loggedIn;
+
+  @override
+  State<_LocalSettingsDialog> createState() => _LocalSettingsDialogState();
+}
+
+class _LocalSettingsDialogState extends State<_LocalSettingsDialog> {
+  late final TextEditingController _server;
+  late final TextEditingController _directory;
+  String? _bookmark;
+  String? _bookmarkedPath;
+  String? _error;
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final settings = widget.store.settings;
+    _server = TextEditingController(text: settings.server);
+    _directory = TextEditingController(text: settings.dataDirectory);
+    _bookmark = settings.directoryBookmark;
+    _bookmarkedPath = settings.dataDirectory;
+  }
+
+  @override
+  void dispose() {
+    _server.dispose();
+    _directory.dispose();
+    super.dispose();
+  }
+
+  Future<void> _chooseDirectory() async {
+    try {
+      final selection = await const MethodChannel(
+        'qq_concept/windows',
+      ).invokeMapMethod<String, String>('chooseDataDirectory');
+      if (!mounted || selection == null) return;
+      final path = selection['path'];
+      final bookmark = selection['bookmark'];
+      if (path == null || bookmark == null) {
+        throw const FormatException('目录选择结果无效');
+      }
+      setState(() {
+        _directory.text = path;
+        _bookmarkedPath = path;
+        _bookmark = bookmark;
+        _error = null;
+      });
+    } on Exception catch (error) {
+      if (mounted) setState(() => _error = '选择目录失败：$error');
+    }
+  }
+
+  Future<void> _save() async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await widget.store.save(
+        QLocalSettings(
+          server: _server.text.trim(),
+          dataDirectory: _directory.text.trim(),
+          options: widget.store.settings.options,
+          directoryBookmark: _directory.text.trim() == _bookmarkedPath
+              ? _bookmark
+              : null,
+        ),
+      );
+      if (mounted) Navigator.of(context).pop();
+    } on Exception catch (error) {
+      if (mounted) setState(() => _error = '保存失败：$error');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('服务器与存储'),
+    content: SizedBox(
+      width: 360,
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              key: const ValueKey('server-address'),
+              controller: _server,
+              decoration: const InputDecoration(labelText: '服务器地址（以 /v1 结尾）'),
+            ),
+            TextField(
+              key: const ValueKey('data-directory'),
+              controller: _directory,
+              decoration: const InputDecoration(labelText: '本地数据目录'),
+            ),
+            if (!kIsWeb && defaultTargetPlatform == TargetPlatform.macOS)
+              TextButton(
+                onPressed: _busy ? null : _chooseDirectory,
+                child: const Text('选择目录'),
+              ),
+            Text(widget.loggedIn ? '服务器地址将在下次登录时生效。' : '服务器地址将在登录时生效。'),
+            const Text('迁移时新目录必须为空，原目录保留。'),
+            if (_error != null)
+              Text(_error!, style: const TextStyle(color: Colors.red)),
+          ],
+        ),
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: _busy ? null : () => Navigator.of(context).pop(),
+        child: const Text('取消'),
+      ),
+      TextButton(
+        key: const ValueKey('save-local-settings'),
+        onPressed: _busy ? null : _save,
+        child: const Text('保存'),
+      ),
+    ],
+  );
 }

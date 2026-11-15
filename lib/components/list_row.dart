@@ -1,10 +1,16 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../core/tokens.dart';
 
 /// 圆角白描边头像框（列表行、聊天窗通用）。
 class QAvatarChip extends StatelessWidget {
-  const QAvatarChip({super.key, this.size = S.friendAvatar, required this.child});
+  const QAvatarChip({
+    super.key,
+    this.size = S.friendAvatar,
+    required this.child,
+  });
 
   final double size;
   final Widget child;
@@ -41,6 +47,7 @@ class QListRow extends StatefulWidget {
     this.titleColor = QC.fname,
     this.subtitleColor = QC.fsig,
     this.contentRightInset = 0,
+    this.unreadCount = 0,
   });
 
   /// 头像内容（放进 [QAvatarChip]）。
@@ -62,13 +69,42 @@ class QListRow extends StatefulWidget {
   final Color titleColor;
   final Color subtitleColor;
   final double contentRightInset;
+  final int unreadCount;
 
   @override
   State<QListRow> createState() => _QListRowState();
 }
 
-class _QListRowState extends State<QListRow> {
+class _QListRowState extends State<QListRow>
+    with SingleTickerProviderStateMixin {
   bool _hover = false;
+  late final AnimationController _shake = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 800),
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.unreadCount > 0) _shake.repeat();
+  }
+
+  @override
+  void didUpdateWidget(covariant QListRow oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.unreadCount > 0 && oldWidget.unreadCount == 0) {
+      _shake.repeat();
+    } else if (widget.unreadCount == 0 && oldWidget.unreadCount > 0) {
+      _shake.stop();
+      _shake.value = 0;
+    }
+  }
+
+  @override
+  void dispose() {
+    _shake.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -94,7 +130,32 @@ class _QListRowState extends State<QListRow> {
         children: [
           Row(
             children: [
-              QAvatarChip(child: widget.avatar),
+              Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  AnimatedBuilder(
+                    animation: _shake,
+                    child: QAvatarChip(child: widget.avatar),
+                    builder: (context, child) => Transform.translate(
+                      key: ValueKey('shake-${widget.title}'),
+                      offset: Offset(
+                        math.sin(_shake.value * 2 * math.pi) * 3,
+                        0,
+                      ),
+                      child: child,
+                    ),
+                  ),
+                  if (widget.unreadCount > 0)
+                    Positioned(
+                      right: -5,
+                      top: -4,
+                      child: QUnreadBadge(
+                        key: ValueKey('unread-${widget.title}'),
+                        count: widget.unreadCount,
+                      ),
+                    ),
+                ],
+              ),
               const SizedBox(width: 9),
               Expanded(
                 child: Column(
@@ -132,19 +193,21 @@ class _QListRowState extends State<QListRow> {
               child: widget.trailingTop!,
             ),
           if (widget.trailingBottom != null)
-            Positioned(
-              right: 2,
-              bottom: 7,
-              child: widget.trailingBottom!,
-            ),
+            Positioned(right: 2, bottom: 7, child: widget.trailingBottom!),
         ],
       ),
     );
 
     return MouseRegion(
-      cursor: widget.onOpen != null ? SystemMouseCursors.click : MouseCursor.defer,
-      onEnter: widget.onOpen == null ? null : (_) => setState(() => _hover = true),
-      onExit: widget.onOpen == null ? null : (_) => setState(() => _hover = false),
+      cursor: widget.onOpen != null
+          ? SystemMouseCursors.click
+          : MouseCursor.defer,
+      onEnter: widget.onOpen == null
+          ? null
+          : (_) => setState(() => _hover = true),
+      onExit: widget.onOpen == null
+          ? null
+          : (_) => setState(() => _hover = false),
       child: widget.onOpen == null
           ? body
           : GestureDetector(
@@ -154,4 +217,33 @@ class _QListRowState extends State<QListRow> {
             ),
     );
   }
+}
+
+class QUnreadBadge extends StatelessWidget {
+  const QUnreadBadge({super.key, required this.count});
+
+  final int count;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    label: '未读 $count 条',
+    child: Container(
+      constraints: const BoxConstraints(minWidth: 14, minHeight: 14),
+      padding: const EdgeInsets.symmetric(horizontal: 3),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(9),
+        gradient: const LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xFFE8574C), Color(0xFFB01E14)],
+        ),
+        border: Border.all(color: const Color(0xFF7A120B), width: 1),
+      ),
+      alignment: Alignment.center,
+      child: Text(
+        count > 99 ? '99+' : '$count',
+        style: QText.of(9, weight: FontWeight.w800),
+      ),
+    ),
+  );
 }

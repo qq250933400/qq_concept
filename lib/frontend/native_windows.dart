@@ -73,6 +73,7 @@ class _NativeWindow {
   final Size size;
   final WindowController controller;
   bool minimized;
+  VoidCallback? onControllerChanged;
 
   /// 原生层摆位 / 去边框就绪后才置 true，驱动窗口内容的出现动画。
   /// 不主动 dispose：窗口 widget 卸载后它随 [_NativeWindow] 一起被 GC 回收。
@@ -99,6 +100,7 @@ class QNativeWindows extends ChangeNotifier {
   QNativeWindows._(this.state) {
     state.addListener(_sync);
     state.onIncomingNotification = _notifyIncoming;
+    _kWindowChannel.setMethodCallHandler(_onNativeCall);
   }
 
   final QAppState state;
@@ -156,6 +158,43 @@ class QNativeWindows extends ChangeNotifier {
   }
 
   bool get isEmpty => _windows.isEmpty;
+
+  Future<void> _onNativeCall(MethodCall call) async {
+    if (call.method != 'showFromTray') {
+      throw MissingPluginException('不支持的窗口操作：${call.method}');
+    }
+    final kind = state.loggedIn ? QWindowKind.panel : QWindowKind.login;
+    final id = kind.name;
+    if (!_windows.containsKey(id)) {
+      state.open(kind);
+      return;
+    }
+    state.restore(id);
+    final window = _windows[id];
+    final handle = window == null ? null : _handleOf(window.controller);
+    if (handle == null) {
+      state.flash('无法恢复窗口');
+      return;
+    }
+    try {
+      await _kWindowChannel.invokeMethod<void>('show', {'handle': handle});
+    } catch (error) {
+      state.flash('无法恢复窗口：$error');
+    }
+  }
+
+  Future<void> _hidePanel(_NativeWindow window) async {
+    final handle = _handleOf(window.controller);
+    if (handle == null) {
+      state.flash('无法隐藏主面板');
+      return;
+    }
+    try {
+      await _kWindowChannel.invokeMethod<void>('hide', {'handle': handle});
+    } catch (error) {
+      state.flash('无法隐藏主面板：$error');
+    }
+  }
 
   /// `runWidget` 的根：全部内容窗口。没有窗口时是空集合（AppKit 里就是
   /// 一个没有窗口但仍在运行的应用），调用方通常已经在退出流程里。
@@ -242,6 +281,22 @@ class QNativeWindows extends ChangeNotifier {
       _windows[w.id] = e;
       _setupWindow(e, _chatIndex(w.id), onReady: () => _reveal(e));
       if (w.minimized) _call(e, (c) => c.setMinimized(true));
+      e.onControllerChanged = () {
+        if (_disposed ||
+            !_windows.containsKey(e.id) ||
+            controller.isDestroyed) {
+          return;
+        }
+        final minimized = controller.isMinimized;
+        if (minimized == e.minimized) return;
+        e.minimized = minimized;
+        if (minimized) {
+          state.minimize(e.id);
+        } else {
+          state.restore(e.id);
+        }
+      };
+      controller.addListener(e.onControllerChanged!);
       if (kDebugMode) {
         debugPrint('[QQ] 独立窗口已创建：${w.id}（共 ${_windows.length} 个）');
         // 去边框是首帧之后异步做的，这里补一次外观自检。
@@ -265,6 +320,9 @@ class QNativeWindows extends ChangeNotifier {
   void _destroy(String id) {
     final e = _windows.remove(id);
     if (e == null) return;
+    if (e.onControllerChanged != null) {
+      e.controller.removeListener(e.onControllerChanged!);
+    }
     // 让仍在树上的出现动画收到终态，避免窗口销毁瞬间闪回初始变换。
     if (!e.reveal.value) e.reveal.value = true;
     _destroying.add(id);
@@ -276,7 +334,7 @@ class QNativeWindows extends ChangeNotifier {
     _destroying.remove(id);
   }
 
-  /// 结束应用（桌面版没有托盘，关掉最后一扇窗口就等于退出）。
+  /// 最后一扇窗口关闭时退出；登录后的主面板关闭按钮会隐藏到托盘。
   void _quit(String reason) {
     if (_disposed) return;
     if (kDebugMode) debugPrint('[QQ] $reason，退出应用');
@@ -287,7 +345,10 @@ class QNativeWindows extends ChangeNotifier {
   void _onOsDestroyed(String id) {
     if (_disposed || _destroying.contains(id)) return;
     if (!_windows.containsKey(id)) return;
-    _windows.remove(id);
+    final window = _windows.remove(id)!;
+    if (window.onControllerChanged != null) {
+      window.controller.removeListener(window.onControllerChanged!);
+    }
     state.close(id);
     _notify();
   }
@@ -489,6 +550,11 @@ class QNativeWindows extends ChangeNotifier {
         // 交给 _sync 统一调 setMinimized，保持状态层为单一数据源。
         state.minimize(e.id);
       case QWinBtnKind.close:
+        if (e.kind == QWindowKind.panel && state.loggedIn) {
+          _hidePanel(e);
+          break;
+        }
+        state.close(e.id);
       case QWinBtnKind.back:
         state.close(e.id);
       case QWinBtnKind.maximize:
@@ -505,6 +571,7 @@ class QNativeWindows extends ChangeNotifier {
     qNativeWindowChrome = false;
     state.removeListener(_sync);
     state.onIncomingNotification = null;
+    _kWindowChannel.setMethodCallHandler(null);
     for (final id in List<String>.from(_windows.keys)) {
       _destroy(id);
     }

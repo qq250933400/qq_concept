@@ -4,7 +4,15 @@ import 'tokens.dart';
 
 /// 前端窗口类型。设计稿的九个 shot 收敛成 7 类真实窗口：
 /// 主面板四态（默认/好友/菜单/竹叶）是一个窗口的四种内部状态。
-enum QWindowKind { login, register, panel, chat, friendsManager, settings, about }
+enum QWindowKind {
+  login,
+  register,
+  panel,
+  chat,
+  friendsManager,
+  settings,
+  about,
+}
 
 enum QPresence {
   online('在线', Color(0xFF61C847)),
@@ -157,8 +165,14 @@ class QFriendGroup {
 QFriend qFriendFromApi(String name, String signature) {
   for (final f in kFriends) {
     if (f.name == name) {
-      return QFriend(name, signature.isEmpty ? f.sig : signature, f.bg, f.skin,
-          f.hair, f.sel);
+      return QFriend(
+        name,
+        signature.isEmpty ? f.sig : signature,
+        f.bg,
+        f.skin,
+        f.hair,
+        f.sel,
+      );
     }
   }
   var hash = 0;
@@ -206,4 +220,12 @@ class QMessage {
     seq: seq ?? this.seq,
     pending: false,
   );
+}
+
+class QRecentChat {
+  const QRecentChat(this.friend, this.message, this.unread);
+
+  final QFriend friend;
+  final QMessage message;
+  final int unread;
 }

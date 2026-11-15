@@ -32,6 +32,9 @@ class MainPanel extends StatelessWidget {
     this.onAddTap,
     this.onGroupTap,
     this.onMainMenuTap,
+    this.onNicknameTap,
+    this.recentChats = const [],
+    this.unreadCounts = const {},
     this.selectedName,
     this.searchQuery = '',
     this.expandedGroup,
@@ -66,6 +69,9 @@ class MainPanel extends StatelessWidget {
 
   /// 主面板左下角企鹅球：主菜单的唯一切换入口。
   final VoidCallback? onMainMenuTap;
+  final VoidCallback? onNicknameTap;
+  final List<QRecentChat> recentChats;
+  final Map<String, int> unreadCounts;
 
   final String? selectedName;
   final String searchQuery;
@@ -204,7 +210,7 @@ class MainPanel extends StatelessWidget {
       Color(0xFF6B4526),
       Color(0xFFE8C49C),
       Color(0xFF35231A),
-      true,
+      1,
     ),
     _Recent(
       '周小满',
@@ -213,7 +219,7 @@ class MainPanel extends StatelessWidget {
       Color(0xFFDFE4E8),
       Color(0xFFE8C49C),
       Color(0xFF4A3A2A),
-      false,
+      0,
     ),
     _Recent(
       '苏禾',
@@ -222,7 +228,7 @@ class MainPanel extends StatelessWidget {
       Color(0xFFD8A8BC),
       Color(0xFFF2DCC8),
       Color(0xFF8A3F5A),
-      false,
+      0,
     ),
     _Recent(
       '林岚',
@@ -231,7 +237,7 @@ class MainPanel extends StatelessWidget {
       Color(0xFF8FA8BC),
       Color(0xFFE8D5B8),
       Color(0xFF3A2E26),
-      false,
+      0,
     ),
     _Recent(
       '陈默',
@@ -240,7 +246,7 @@ class MainPanel extends StatelessWidget {
       Color(0xFF3A5A7A),
       Color(0xFFF2D8B0),
       Color(0xFF2E2620),
-      false,
+      0,
     ),
     _Recent(
       '何小满',
@@ -249,7 +255,7 @@ class MainPanel extends StatelessWidget {
       Color(0xFF9AB88A),
       Color(0xFFF0D8B8),
       Color(0xFF5A3A28),
-      false,
+      0,
     ),
   ];
 
@@ -338,6 +344,10 @@ class MainPanel extends StatelessWidget {
 
   // ---------------------------------------------------------------- 玻璃头 82
   Widget _glassHead(bool showUnread) {
+    final totalUnread = unreadCounts.values.fold<int>(
+      0,
+      (sum, count) => sum + count,
+    );
     return Positioned(
       left: 0,
       top: 0,
@@ -446,14 +456,23 @@ class MainPanel extends StatelessWidget {
             left: 12,
             top: 47,
             width: 120,
-            child: Text(
-              displayName,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: QText.of(
-                14,
-                weight: FontWeight.w700,
-                shadows: _headShadow,
+            child: GestureDetector(
+              key: const ValueKey('edit-nickname'),
+              onTap: staticPreview || menuOpen ? null : onNicknameTap,
+              child: MouseRegion(
+                cursor: staticPreview || menuOpen || onNicknameTap == null
+                    ? MouseCursor.defer
+                    : SystemMouseCursors.click,
+                child: Text(
+                  displayName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: QText.of(
+                    14,
+                    weight: FontWeight.w700,
+                    shadows: _headShadow,
+                  ),
+                ),
               ),
             ),
           ),
@@ -470,12 +489,14 @@ class MainPanel extends StatelessWidget {
                 const EnvelopeIcon(width: 17, height: 15),
                 const SizedBox(width: 5),
                 Visibility(
-                  visible: showUnread,
+                  visible: staticPreview ? showUnread : totalUnread > 0,
                   maintainSize: true,
                   maintainAnimation: true,
                   maintainState: true,
                   child: Text(
-                    '2',
+                    staticPreview
+                        ? '2'
+                        : (totalUnread > 99 ? '99+' : '$totalUnread'),
                     style: QText.of(
                       13,
                       weight: FontWeight.w700,
@@ -762,6 +783,10 @@ class MainPanel extends StatelessWidget {
               _groupLabel(g),
               open: g.label == openGroup,
               hi: g.label == openGroup,
+              unread: g.members.fold<int>(
+                0,
+                (sum, friend) => sum + (unreadCounts[friend.name] ?? 0),
+              ),
               onTap: groupTap == null ? null : () => groupTap(g.label),
             ),
             if (g.label == openGroup)
@@ -820,6 +845,28 @@ class MainPanel extends StatelessWidget {
   /// 竹叶背景已上移为整个列表区的背景布；本页保留 iconFans 标题条 + 消息行。
   /// 标题条固定不滚动，消息行区域可滚动并与右侧滚动条联动。
   Widget _recentPage() {
+    final recent = staticPreview
+        ? _recents
+        : recentChats.map((chat) {
+            final friend = chat.friend;
+            final time = chat.message.at.toLocal();
+            final now = DateTime.now();
+            final label =
+                time.year == now.year &&
+                    time.month == now.month &&
+                    time.day == now.day
+                ? '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}'
+                : '${time.month.toString().padLeft(2, '0')}-${time.day.toString().padLeft(2, '0')}';
+            return _Recent(
+              friend.name,
+              chat.message.text,
+              label,
+              friend.bg,
+              friend.skin,
+              friend.hair,
+              chat.unread,
+            );
+          }).toList();
     return SizedBox(
       width: S.mainWinW,
       height: S.bambooH,
@@ -835,8 +882,8 @@ class MainPanel extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  for (final m in _recents) _recentRow(m),
-                  if (_recents.isEmpty)
+                  for (final m in recent) _recentRow(m),
+                  if (recent.isEmpty)
                     Padding(
                       padding: const EdgeInsets.only(left: 14, top: 12),
                       child: Text('暂无消息', style: QText.of(12, color: QC.fsig)),
@@ -863,13 +910,17 @@ class MainPanel extends StatelessWidget {
       ),
       title: m.name,
       subtitle: m.preview,
-      titleColor: m.unread ? QC.white : const Color(0xFFDDE6EB),
-      subtitleColor: m.unread ? QC.newsSig : QC.fsig,
+      titleColor: m.unread > 0 ? QC.white : const Color(0xFFDDE6EB),
+      subtitleColor: m.unread > 0 ? QC.newsSig : QC.fsig,
       trailingTop: Text(
         m.time,
         style: QText.of(10, color: const Color(0xFF8D9AA2)),
       ),
-      trailingBottom: m.unread ? const _UnreadBadge() : null,
+      trailingBottom: staticPreview && m.unread > 0
+          ? QUnreadBadge(count: m.unread)
+          : null,
+      unreadCount: staticPreview ? 0 : m.unread,
+      contentRightInset: 40,
       onOpen: open == null ? null : () => open(m.name),
     );
   }
@@ -896,13 +947,13 @@ class MainPanel extends StatelessWidget {
             ),
             alignment: Alignment.center,
             child: Text(
-              'icon',
+              staticPreview ? 'icon' : 'QQ',
               style: QText.of(9, weight: FontWeight.w700, letterSpacing: -.5),
             ),
           ),
           const SizedBox(width: 5),
           Text(
-            'iconFans | 国标粉丝(2)',
+            staticPreview ? 'iconFans | 国标粉丝(2)' : '最近聊天',
             style: QText.of(
               11,
               weight: FontWeight.w700,
@@ -929,6 +980,7 @@ class MainPanel extends StatelessWidget {
     String text, {
     bool open = false,
     bool hi = false,
+    int unread = 0,
     VoidCallback? onTap,
   }) {
     final row = Container(
@@ -954,6 +1006,10 @@ class MainPanel extends StatelessWidget {
             text,
             style: QText.of(12.5, weight: FontWeight.w700, shadows: _grpShadow),
           ),
+          if (unread > 0) ...[
+            const SizedBox(width: 6),
+            QUnreadBadge(count: unread),
+          ],
         ],
       ),
     );
@@ -988,6 +1044,7 @@ class MainPanel extends StatelessWidget {
       trailingTop: sel ? const _Pin() : null,
       trailingTopOffset: const Offset(10, 5),
       contentRightInset: status == null ? 0 : 44,
+      unreadCount: unreadCounts[f.name] ?? 0,
       trailingBottom: status == null
           ? null
           : Row(
@@ -1007,7 +1064,11 @@ class MainPanel extends StatelessWidget {
     final index = group.label.lastIndexOf('(');
     final name = index < 0 ? group.label : group.label.substring(0, index);
     final online = group.members
-        .where((f) => (friendPresence![f.name] ?? QPresence.offline) != QPresence.offline)
+        .where(
+          (f) =>
+              (friendPresence![f.name] ?? QPresence.offline) !=
+              QPresence.offline,
+        )
         .length;
     return '$name($online/${group.members.length})';
   }
@@ -1392,7 +1453,7 @@ class _Recent {
     this.bg,
     this.skin,
     this.hair, [
-    this.unread = false,
+    this.unread = 0,
   ]);
   final String name;
   final String preview;
@@ -1400,29 +1461,7 @@ class _Recent {
   final Color bg;
   final Color skin;
   final Color hair;
-  final bool unread;
-}
-
-/// 未读小红点徽标（14x14）。
-class _UnreadBadge extends StatelessWidget {
-  const _UnreadBadge();
-
-  @override
-  Widget build(BuildContext context) => Container(
-    width: 14,
-    height: 14,
-    decoration: BoxDecoration(
-      shape: BoxShape.circle,
-      gradient: const LinearGradient(
-        begin: Alignment.topCenter,
-        end: Alignment.bottomCenter,
-        colors: [Color(0xFFE8574C), Color(0xFFB01E14)],
-      ),
-      border: Border.all(color: const Color(0xFF7A120B), width: 1),
-    ),
-    alignment: Alignment.center,
-    child: Text('1', style: QText.of(9, weight: FontWeight.w800)),
-  );
+  final int unread;
 }
 
 /// 选中行右侧图钉（14x18 主体 + 下方 2x6 针脚）

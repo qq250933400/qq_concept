@@ -6,6 +6,7 @@ import 'package:flutter/material.dart' show Offset;
 import 'backend.dart';
 import 'contacts.dart';
 import 'models.dart';
+import 'local_settings.dart';
 import 'profile.dart';
 
 /// QQ 概念版前端状态（纯 ChangeNotifier，无第三方状态管理库）。
@@ -19,6 +20,8 @@ class QAppState extends ChangeNotifier {
 
   /// 真实 API 桥接；null = 设计稿画廊 / 离线演示模式。
   QBackend? backend;
+  QLocalStore? localStore;
+  String? localStorageError;
 
   /// 登录 / 注册中的忙碌态与错误文案（登录窗内联显示）。
   bool apiBusy = false;
@@ -88,6 +91,13 @@ class QAppState extends ChangeNotifier {
   String account = '10001';
   String password = '';
   bool remember = true;
+  QPresence loginPresence = QPresence.online;
+
+  void setLoginPresence(QPresence status) {
+    if (apiBusy) return;
+    loginPresence = status;
+    _notify();
+  }
 
   /// 主面板当前 tab：0 好友列表 / 1 群组列表 / 2 最近消息。
   int panelTab = 0;
@@ -112,9 +122,44 @@ class QAppState extends ChangeNotifier {
 
   // ---------------------------------------------------------------- 消息
   final Map<String, List<QMessage>> threads = {};
+  final Map<String, _UnreadState> _unread = {};
 
   List<QMessage> thread([String? name]) =>
       threads[name ?? activeFriend ?? '云帆'] ?? const <QMessage>[];
+
+  int unreadFor(String friend) => _unread[friend]?.count ?? 0;
+  int get totalUnread =>
+      _unread.values.fold(0, (sum, item) => sum + item.count);
+  Map<String, int> get unreadCounts => {
+    for (final entry in _unread.entries)
+      if (entry.value.count > 0) entry.key: entry.value.count,
+  };
+
+  List<QRecentChat> get recentChats {
+    final result = <QRecentChat>[];
+    for (final entry in threads.entries) {
+      if (entry.value.isEmpty) continue;
+      final message = entry.value.reduce((a, b) {
+        if (b.at.isAfter(a.at)) return b;
+        if (b.at.isBefore(a.at)) return a;
+        if (b.seq == null) return b;
+        if (a.seq == null) return a;
+        return b.seq! >= a.seq! ? b : a;
+      });
+      final matches = friends.where((friend) => friend.name == entry.key);
+      final friend = matches.isEmpty
+          ? qFriendFromApi(entry.key, '')
+          : matches.first;
+      result.add(QRecentChat(friend, message, unreadFor(entry.key)));
+    }
+    result.sort((a, b) => b.message.at.compareTo(a.message.at));
+    return result;
+  }
+
+  bool isChatVisible(String friend) {
+    final window = _byId('chat:$friend');
+    return window != null && !window.minimized;
+  }
 
   // ---------------------------------------------------------------- 设置
   bool autoStart = false;
@@ -174,6 +219,7 @@ class QAppState extends ChangeNotifier {
     myPresence = QPresence.online;
     presenceBusy = false;
     presence.clear();
+    _unread.clear();
     displayName = '云帆';
     signature = '';
     sound = true;
@@ -261,8 +307,13 @@ class QAppState extends ChangeNotifier {
   /// 唯一入口：窗口只登记到 [windows]，由画布桌面或 QNativeWindows 各自渲染。
   /// 独立窗口模式下 QNativeWindows 监听本对象并 diff 出 OS 窗口的增/删/最小化。
   void open(QWindowKind kind, {String? friend}) {
-    _open(kind, friend: friend);
+    final window = _open(kind, friend: friend);
     _notify();
+    if (kind == QWindowKind.chat && window.friend != null && backend != null) {
+      _background(backend!.openConversation(window.friend!), '加载聊天记录');
+    } else if (kind == QWindowKind.chat && window.friend != null) {
+      _markLocalRead(window.friend!);
+    }
   }
 
   void close(String id) {
@@ -280,13 +331,24 @@ class QAppState extends ChangeNotifier {
   }
 
   void restore(String id) {
+    QWindow? restored;
     for (final w in windows) {
       if (w.id == id) {
         w.minimized = false;
         w.z = ++_z;
+        restored = w;
       }
     }
     _notify();
+    if (restored?.kind == QWindowKind.chat && restored?.friend != null) {
+      final friend = restored!.friend!;
+      final b = backend;
+      if (b == null) {
+        _markLocalRead(friend);
+      } else {
+        _background(b.openConversation(friend), '加载聊天记录');
+      }
+    }
   }
 
   void focus(String id) {
@@ -342,14 +404,26 @@ class QAppState extends ChangeNotifier {
     _notify();
   }
 
+  void openSettingsWindow() {
+    if (apiBusy) return;
+    _open(QWindowKind.settings);
+    _notify();
+  }
+
   void login() {
     if (apiBusy) return;
+    if (localStorageError != null) {
+      authError = localStorageError;
+      _notify();
+      return;
+    }
     if (account.trim().isEmpty || password.trim().isEmpty) {
       flash('请输入帐号和密码');
       return;
     }
     final b = backend;
     if (b == null) {
+      myPresence = loginPresence;
       _enterLoggedIn();
       return;
     }
@@ -377,6 +451,11 @@ class QAppState extends ChangeNotifier {
   /// 注册窗口「注册并登录」：校验 → 后端注册 → 自动登录进主面板。
   void submitRegistration(QRegistration reg) {
     if (registerBusy) return;
+    if (localStorageError != null) {
+      registerError = localStorageError;
+      _notify();
+      return;
+    }
     final validation = reg.validate();
     if (validation != null) {
       registerError = validation;
@@ -478,6 +557,7 @@ class QAppState extends ChangeNotifier {
     final b = backend;
     password = '';
     _reset(logged: false);
+    threads.clear();
     friendGroups = null;
     friends = List<QFriend>.from(kFriends);
     // 退出后关系链回到离线演示数据，避免残留上一账号的真实好友/申请。
@@ -555,8 +635,6 @@ class QAppState extends ChangeNotifier {
   void selectFriend(String name) {
     activeFriend = name;
     open(QWindowKind.chat, friend: name);
-    final b = backend;
-    if (b != null) _background(b.openConversation(name), '加载聊天记录');
   }
 
   void handleMenuAction(String action) {
@@ -604,6 +682,10 @@ class QAppState extends ChangeNotifier {
       threads
           .putIfAbsent(key, () => <QMessage>[])
           .add(QMessage(_reply(trimmed), false, DateTime.now()));
+      if (!isChatVisible(key)) {
+        final item = _unread.putIfAbsent(key, _UnreadState.new);
+        item.localCount++;
+      }
       _notify();
     });
   }
@@ -661,15 +743,42 @@ class QAppState extends ChangeNotifier {
   };
 
   /// 设置页「保存」：一次 PUT 写全量，避免逐项切换打爆接口。
-  void commitSettings() {
+  Future<void> commitSettings() async {
+    final store = localStore;
+    if (store != null) {
+      final current = store.settings;
+      await store.save(
+        QLocalSettings(
+          server: current.server,
+          dataDirectory: current.dataDirectory,
+          options: allSettings(),
+          directoryBookmark: current.directoryBookmark,
+        ),
+      );
+    }
     final b = backend;
-    if (b != null) _background(b.saveSettings(allSettings()), '保存设置');
+    if (b != null && loggedIn) await b.saveSettings(allSettings());
   }
 
   void setBackendNickname(String name) {
     if (name.isEmpty || displayName == name) return;
     displayName = name;
     _notify();
+  }
+
+  Future<void> changeNickname(String value) async {
+    final name = value.trim();
+    if (name.isEmpty || name.length > 32) {
+      throw const FormatException('昵称需为 1 ~ 32 个字符');
+    }
+    final b = backend;
+    if (b == null) throw StateError('修改昵称需要连接 API 服务');
+    final generation = _presenceGeneration;
+    final updated = await b.updateNickname(name);
+    if (_disposed || generation != _presenceGeneration || backend != b) {
+      throw StateError('登录状态已改变，请重新登录');
+    }
+    setBackendNickname(updated);
   }
 
   void setBackendSignature(String value) {
@@ -758,7 +867,85 @@ class QAppState extends ChangeNotifier {
           ),
         )
         .toList();
-    threads[friend] = <QMessage>[...remote, ...pending];
+    final lastRemote = remote.fold<int>(
+      0,
+      (last, m) => (m.seq ?? 0) > last ? m.seq! : last,
+    );
+    final newer = current.where(
+      (m) =>
+          !m.pending &&
+          m.seq != null &&
+          m.seq! > lastRemote &&
+          !remote.any((r) => r.seq == m.seq),
+    );
+    threads[friend] = <QMessage>[...remote, ...newer, ...pending];
+    _notify();
+  }
+
+  void applyUnreadSnapshot(String friend, int count, int lastSeq, int readSeq) {
+    final item = _unread.putIfAbsent(friend, _UnreadState.new);
+    if (lastSeq < item.snapshotSeq || readSeq < item.readSeq) return;
+    item.snapshotCount = count;
+    item.snapshotSeq = lastSeq;
+    item.readSeq = readSeq;
+    item.newSeqs.removeWhere((seq) => seq <= lastSeq || seq <= readSeq);
+    _notify();
+  }
+
+  void addUnread(String friend, int seq) {
+    final item = _unread.putIfAbsent(friend, _UnreadState.new);
+    if (seq > item.snapshotSeq && seq > item.readSeq && item.newSeqs.add(seq)) {
+      _notify();
+    }
+  }
+
+  void markConversationRead(String friend, int seq) {
+    final item = _unread[friend];
+    if (item == null) return;
+    if (seq > item.readSeq) item.readSeq = seq;
+    if (seq >= item.snapshotSeq) item.snapshotCount = 0;
+    item.newSeqs.removeWhere((value) => value <= seq);
+    item.localCount = 0;
+    _notify();
+  }
+
+  void _markLocalRead(String friend) {
+    final item = _unread[friend];
+    if (item == null) return;
+    var seq = item.snapshotSeq;
+    for (final value in item.newSeqs) {
+      if (value > seq) seq = value;
+    }
+    markConversationRead(friend, seq);
+  }
+
+  void renameBackendFriend(String oldName, String newName) {
+    if (oldName == newName) return;
+    if ((threads.containsKey(oldName) && threads.containsKey(newName)) ||
+        (_byId('chat:$oldName') != null && _byId('chat:$newName') != null) ||
+        (_unread.containsKey(oldName) && _unread.containsKey(newName))) {
+      throw StateError('好友昵称变更与已有聊天冲突，请重新登录');
+    }
+    final messages = threads.remove(oldName);
+    if (messages != null) threads[newName] = messages;
+    final unread = _unread.remove(oldName);
+    if (unread != null) _unread[newName] = unread;
+    final status = presence.remove(oldName);
+    if (status != null) presence[newName] = status;
+    if (activeFriend == oldName) activeFriend = newName;
+    if (selectedContactName == oldName) selectedContactName = newName;
+    final index = windows.indexWhere((w) => w.id == 'chat:$oldName');
+    if (index >= 0) {
+      final old = windows[index];
+      windows[index] = QWindow(
+        id: 'chat:$newName',
+        kind: old.kind,
+        friend: newName,
+        pos: old.pos,
+        minimized: old.minimized,
+        z: old.z,
+      );
+    }
     _notify();
   }
 
@@ -999,6 +1186,7 @@ class QAppState extends ChangeNotifier {
   void _localDeleteFriend(String name) {
     contacts = contacts.where((c) => c.name != name).toList();
     threads.remove(name);
+    _unread.remove(name);
     if (selectedContactName == name) selectedContactName = null;
     _rebuildLocalViews();
   }
@@ -1305,6 +1493,7 @@ class QAppState extends ChangeNotifier {
 
   void clearBackendThread(String friend) {
     threads.remove(friend);
+    _unread.remove(friend);
     _notify();
   }
 
@@ -1325,4 +1514,14 @@ class QAppState extends ChangeNotifier {
     _disposed = true;
     super.dispose();
   }
+}
+
+class _UnreadState {
+  int snapshotCount = 0;
+  int snapshotSeq = 0;
+  int readSeq = 0;
+  int localCount = 0;
+  final Set<int> newSeqs = {};
+
+  int get count => snapshotCount + newSeqs.length + localCount;
 }
