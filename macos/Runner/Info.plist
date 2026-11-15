@@ -28,5 +28,12 @@
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<!-- 本地开发时 API 服务跑在 http://127.0.0.1:3000，
+	     ATS 默认会拦掉明文 HTTP；放行本机网络。生产应改用 HTTPS。 -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetwork</key>
+		<true/>
+	</dict>
 </dict>
 </plist>

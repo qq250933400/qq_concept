@@ -157,6 +157,12 @@ class _QDesktopState extends State<QDesktop> {
           cx((area.width - s.width) / 2),
           cy((area.height - s.height) / 2 - 16),
         );
+      case QWindowKind.register:
+        // 注册窗与登录窗同轴，略偏右下露出后面的登录窗。
+        return Offset(
+          cx((area.width - s.width) / 2 + 40),
+          cy((area.height - s.height) / 2 + 8),
+        );
       case QWindowKind.panel:
         return Offset(cx(area.width - s.width - 70), cy(24));
       case QWindowKind.chat:

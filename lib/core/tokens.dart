@@ -114,6 +114,10 @@ class S {
   static const double metalBtnH = 23;
   static const double metalBtnMinW = 76;
   static const double dlgBtnSize = 15;
+
+  // 注册窗口
+  static const double regW = 480;
+  static const double regH = 470;
 }
 
 /// 颜色（全部取自 ui-v4.html 原文）

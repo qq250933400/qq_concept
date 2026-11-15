@@ -71,7 +71,7 @@ Flutter 桌面端已用官方 Windowing API 实现「1 控制台 + N 个原生�
 | 编号 | 需求 | 验收标准 |
 |---|---|---|
 | FR-A-01 | 账号密码登录 | 正确凭证返回 token 与用户资料；错误凭证返回 401 `AUTH_BAD_CREDENTIAL`，且不区分「账号不存在/密码错」 |
-| FR-A-02 | 注册 | 账号唯一（4–20 位字母数字）、密码 ≥ 8 位且含字母数字；重复账号返回 409 `ACCOUNT_EXISTS` |
+| FR-A-02 | 注册 | 账号唯一、密码 ≥ 6 位；昵称 / 性别 / 内置头像随注册提交；重复账号返回 409 `ACCOUNT_EXISTS` |
 | FR-A-03 | Token 刷新 | access 过期（15min）后，用 refresh（7d）静默换新；refresh 失效则前端回登录窗 |
 | FR-A-04 | 多端登录 | 同一账号可在 3 台设备并存；第 4 台登录踢掉最早的一台，被踢端收到 `kick` 帧并回登录窗 |
 | FR-A-05 | 记住密码 | 前端只持久化 refreshToken（Keychain），不保存明文密码；取消勾选则退出后清空 |
@@ -493,7 +493,46 @@ flowchart LR
 | 新增 `lib/data/local_store.dart` | `drift` 本地库：会话表 + 最近 50 条消息，冷启动先渲染缓存 |
 | `lib/screens/*.dart` | 不改结构；仅把常量数据换成 repository 数据，空态/加载态按需补 |
 
-**开关**：`--dart-define=QQ_API_BASE=` 为空时走现有假数据，便于 UI 回归对照；有值时走真实后端。
+**开关（原规划）**：`--dart-define=QQ_API_BASE=` 为空时走现有假数据；有值时走真实后端。
+
+> **落地状态（2026-11-14 更新，T07 与关系链客户端侧已完成）**：实际实现与上面的目录规划有差异，以代码为准。
+> - 后端工程为平级 `../qq-server/`（NestJS + MySQL + Redis），不在 `server/`；
+> - 客户端新增 `lib/api/`（`api_config / api_models / api_client / ws_gateway / api_bridge`）
+>   与 `lib/core/backend.dart` 抽象层；`QAppState` 只依赖 `QBackend`，UI 不感知数据来源；
+> - 用官方 `http` / `web_socket_channel` 代替 Dio，token 仅存内存（未做 Keychain / drift
+>   本地缓存，冷启动仍从服务端拉历史）；
+> - 开关改为 `QQ_USE_API`（默认 true，preset=login 时生效）、`QQ_API_BASE`
+>   （默认本机 3000）、`QQ_DEMO_PASSWORD`；设计稿 URL 预设自动走本地假数据；
+> - 已接入：登录/注册/登出与 refresh 自动重放、好友分组、会话历史/已读、WS 收发与
+>   ack/ready 补偿、设置云同步、kick/presence。
+> - **注册窗口（2026-11-15 新增）**：登录窗「注册新帐号」打开独立 OS 窗口
+>   `QWindowKind.register`（480×470，`lib/screens/register_screen.dart`），字段
+>   登录帐号 / 用户昵称 / 登录密码 / 重复密码 / 性别 / 内置头像；`lib/core/profile.dart`
+>   定义 `QGender`（0 保密 / 1 男 / 2 女）与 `QRegistration` 值对象，`lib/core/avatars.dart`
+>   定义 8 款自绘矢量头像与 `builtin://avatar/N` 编解码；提交 `POST /auth/register`
+>   带 `nickname + gender + avatar_url`，注册即登录，头像显示在主面板相框。
+>   服务端 `V2__user_gender.sql` 给 `users` 加 `gender TINYINT`（默认 0），
+>   register / updateMe / me 均透传；资料字段只透传字符串，客户端负责绘制。
+> - **关系链（本次补齐）**：`QBackend` 扩展 `refreshContacts / searchContacts /
+>   sendFriendRequest / accept | rejectFriendRequest / create | rename | deleteFriendGroup /
+>   moveFriendToGroup / deleteFriend`；`api_client.dart` 补 `GET /users/search`、
+>   好友申请收/发/处理、分组增删改、`PATCH/DELETE /friends/{id}`；`api_bridge.dart`
+>   同时回填 `QFriendGroup/QFriend` 与 `QContactGroup/QContact`，写操作成功后统一重拉
+>   `/friends` 与申请列表。
+> - **好友管理页已从静态设计稿改为数据驱动**：新增 `lib/core/contacts.dart` DTO、
+>   `lib/screens/contacts_dialogs.dart` 浮层；`friends_manager_screen.dart` 改为
+>   `AnimatedBuilder(animation: state)`，气泡球 / 照片卡 / 信息卡 / 搜索 / 分组筛选均由
+>   真实关系链驱动；标题栏提供「+ 添加好友」「好友申请 (N)」「分组管理」，主面板「+」
+>   直达添加好友；长按 / 右键支持改名分组、移动分组、删除好友。`staticPreview: true`
+>   仅在 `#design` 画廊保留 V6.1 静态像素对照。
+> - `backend == null`（`QQ_USE_API=false` 或画廊）时用 `_localContacts` / `_localDirectory`
+>   做内存兜底，可完整演示「搜索 → 申请 → 通过 → 建/改/删分组 → 移动 → 删除」。
+> - 验收：`test/api_integration_test.dart`、`test/contacts_integration_test.dart`
+>   （`RUN_API_TEST=true` 打真实服务）、`test/contacts_state_test.dart`（离线全链路 +
+>   浮层 + 画廊回归）全通过；macOS 真机自动登录、Web 无头交互冒烟
+>   （REST + WS + 服务端分组渲染 + 关系链操作）均通过，截图见 `../verify/qq_contacts_*.png`。
+> - 仍未做：好友备注编辑 UI（后端 `PATCH /friends/{id}` 已支持 `remark`）、
+>   token 持久化与本地消息缓存、图片 / 群聊 / 撤回（M2）。
 
 ---
 
@@ -571,21 +610,29 @@ PORT=3000
 | T04 | WS 网关：握手鉴权、ready、心跳 | T02 | `gateway/` | 连接后 5s 内收到 ready |
 | T05 | 发消息闭环：定序、落库、ack、广播 | T04 | `messages/` | 两账号互发，seq 连续 |
 | T06 | 会话列表 + 历史分页 | T05 | `/conversations*` | 重启后列表与消息一致 |
-| T07 | Flutter 接入：api_client + auth + chat | T02/T05 | `lib/data/*` | 关掉假数据仍可用 |
+| T07 ✅ | Flutter 接入：api_client + auth + chat + 关系链（已落地 `lib/api/*`、`lib/core/contacts.dart`、`lib/screens/contacts_dialogs.dart`） | T02/T05 | `lib/api/*`, `lib/core/backend.dart` | 关掉假数据仍可用；真实服务集成测试通过 |
 | T08 | M0 联调与缺陷修复 | 全部 | — | §1.3 判据 1、3 通过 |
 
 ### M1（约 2 周）
 
 | ID | 任务 | 依赖 | 验收 |
 |---|---|---|---|
-| T09 | 好友申请/通过/拒绝（事务） | T02 | 通过后双方互见，双向关系正确 |
-| T10 | 好友列表 + 分组 + 搜索 | T09 | 500 条内返回 < 200ms |
-| T11 | 备注/移动分组/删除好友 | T10 | 删除后历史消息仍在 |
+| T09 ✅ | 好友申请/通过/拒绝（事务） | T02 | 通过后双方互见，双向关系正确 |
+| T10 ✅ | 好友列表 + 分组 + 搜索 | T09 | 500 条内返回 < 200ms |
+| T11 ◐ | 备注/移动分组/删除好友 | T10 | 删除后历史消息仍在 |
 | T12 | 已读回执 + 未读计数 | T05 | 对方已读 200ms 内可见 |
 | T13 | 多端登录 + 顶号踢下线 | T04 | 第 4 台登录，最早端收到 kick |
 | T14 | 断线重连 + afterSeq 补偿 | T13 | 断网 30s 恢复不丢不重 |
 | T15 | 设置云同步 | T02 | 两设备读到同一值 |
 | T16 | e2e 用例（auth/消息/好友） | 全部 | CI 跑通 |
+
+> **M1 落地状态（2026-11-14）**：服务端接口由 `../qq-server/` 全部提供（27 REST + WS 帧，
+> 双实例 29 项冒烟覆盖已读回执、顶号 kick、after_seq 补偿、设置跨实例一致）；
+> 客户端已接线 T09/T10（好友申请收发与处理、好友列表 / 分组 / 搜人、分组增删改、
+> 移动分组、删除好友）。
+> **T11 为部分完成**：`api_client.patchFriend()` 已支持 `remark`，但好友管理页尚未提供
+> 备注编辑入口；移动分组与删除好友已完成。
+> 其余 M1 项的状态以 `qq-server/docs/api.md` 与 `qq_concept/README.md` 的验证章节为准。
 
 ### 开发约定
 

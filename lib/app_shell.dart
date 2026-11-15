@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'components/linked_scrollbar.dart';
+import 'core/app_state.dart';
 import 'core/tokens.dart';
 import 'core/widgets.dart';
 import 'screens/about_screen.dart';
@@ -54,7 +55,15 @@ const List<_PanelShot?> _shotPanels = [
 ];
 
 class AppShell extends StatefulWidget {
-  const AppShell({super.key, this.onExitDesign, this.initialShot});
+  const AppShell({
+    super.key,
+    this.onExitDesign,
+    this.initialShot,
+    required this.state,
+  });
+
+  /// 好友管理窗口需要状态对象；画廊里只用它做 1:1 静态对照。
+  final QAppState state;
 
   /// 切回交互应用桌面（设计稿预览不再是默认入口）。
   final VoidCallback? onExitDesign;
@@ -152,7 +161,10 @@ class _AppShellState extends State<AppShell> {
           staticPreview: true,
         );
       case 6:
-        return const FriendsManagerScreen();
+        return FriendsManagerScreen(
+          state: widget.state,
+          staticPreview: true,
+        );
       case 7:
         return const SettingsScreen();
       case 8:

@@ -6,6 +6,8 @@ import '../components/bamboo_backdrop.dart';
 import '../components/list_row.dart';
 import '../components/scroll_list.dart';
 import '../components/tab_flip.dart';
+import '../core/avatars.dart';
+import '../core/models.dart';
 import '../core/tokens.dart';
 import '../core/window_chrome.dart';
 import '../core/widgets.dart';
@@ -34,6 +36,9 @@ class MainPanel extends StatelessWidget {
     this.searchQuery = '',
     this.expandedGroup,
     this.staticPreview = false,
+    this.friendGroups,
+    this.friends,
+    this.myAvatarIndex,
   });
 
   /// 当前 tab 页索引：0 好友列表 / 1 群组列表 / 2 最近消息。
@@ -65,6 +70,15 @@ class MainPanel extends StatelessWidget {
 
   /// 设计稿画廊模式：四态严格按 V6.1 渲染，不启用分组展开逻辑。
   final bool staticPreview;
+
+  /// API 模式下由服务端 friend_groups 驱动；null 时用设计稿的六组静态数据。
+  /// 这样「接后端」与「画廊/离线演示」共用同一套渲染代码。
+  final List<QFriendGroup>? friendGroups;
+  final List<QFriend>? friends;
+
+  /// 当前用户的内置头像下标（`builtin://avatar/N`）。
+  /// null（未设置 / 外链 / 画廊）时左上角相框保持 V6.1 默认剪影。
+  final int? myAvatarIndex;
 
   static const List<Shadow> _headShadow = [
     Shadow(color: Color(0xD9000000), offset: Offset(0, 1), blurRadius: 2),
@@ -301,10 +315,14 @@ class MainPanel extends StatelessWidget {
               child: IgnorePointer(
                 child: Transform.rotate(
                   angle: -3 * math.pi / 180,
-                  child: const SizedBox(
+                  child: SizedBox(
                     width: 120,
                     height: 130,
-                    child: CustomPaint(painter: _AvatarDecoPainter()),
+                    child: CustomPaint(
+                      painter: _AvatarDecoPainter(
+                        avatarIndex: staticPreview ? null : myAvatarIndex,
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -663,16 +681,16 @@ class MainPanel extends StatelessWidget {
   /// 页骨架 = [QScrollList]：内容列可滚动（滚轮 / 拖拽拇指），右侧滚动条联动。
   Widget _friendsPage(ValueChanged<String>? groupTap) {
     final q = searchQuery.trim().toLowerCase().replaceAll(' ', '');
-    final rows = q.isEmpty
-        ? _friends
-        : _friends
-              .where(
-                (f) =>
-                    f.name.toLowerCase().contains(q) ||
-                    f.sig.toLowerCase().contains(q) ||
-                    (_pinyin[f.name] ?? '').replaceAll(' ', '').contains(q),
-              )
-              .toList();
+    final all = friends ?? _friends;
+    final groups = friendGroups ??
+        <QFriendGroup>[
+          for (final label in _grpLabels) QFriendGroup(label, _friends),
+        ];
+    bool matches(QFriend f) =>
+        f.name.toLowerCase().contains(q) ||
+        f.sig.toLowerCase().contains(q) ||
+        (_pinyin[f.name] ?? '').replaceAll(' ', '').contains(q);
+    final rows = q.isEmpty ? all : all.where(matches).toList();
     // 画廊固定展示「大学好友」展开态；交互态由 expandedGroup 驱动。
     final String? openGroup = staticPreview ? '大学好友(21/66)' : expandedGroup;
 
@@ -697,15 +715,17 @@ class MainPanel extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          for (final label in _grpLabels) ...[
+          for (final g in groups) ...[
             _group(
-              label,
-              open: label == openGroup,
-              hi: label == openGroup,
-              onTap: groupTap == null ? null : () => groupTap(label),
+              g.label,
+              open: g.label == openGroup,
+              hi: g.label == openGroup,
+              onTap: groupTap == null ? null : () => groupTap(g.label),
             ),
-            if (label == openGroup)
-              for (final f in rows) _friendRow(f),
+            if (g.label == openGroup)
+              for (final f in (q.isEmpty
+                  ? g.members
+                  : g.members.where(matches).toList())) _friendRow(f),
           ],
         ],
       );
@@ -1274,22 +1294,8 @@ class _SearchInputState extends State<_SearchInput> {
   );
 }
 
-class _Friend {
-  const _Friend(
-    this.name,
-    this.sig,
-    this.bg,
-    this.skin,
-    this.hair, [
-    this.sel = false,
-  ]);
-  final String name;
-  final String sig;
-  final Color bg;
-  final Color skin;
-  final Color hair;
-  final bool sel;
-}
+/// 与 [QFriend] 同构：API 模式直接用状态层传进来的好友数据。
+typedef _Friend = QFriend;
 
 /// 群组列表行数据（tab1）。
 class _Group {
@@ -1552,7 +1558,10 @@ class _BrushPainter extends CustomPainter {
 /// 局部坐标 120x130，由 Positioned(top:-24) 映射：canvas y = 局部 y - 24。
 /// 单个 painter 依次画：撕裂羊皮纸相框 → 深蓝照片 → 手写波浪线 → 橙棕枫叶 → 琴弓。
 class _AvatarDecoPainter extends CustomPainter {
-  const _AvatarDecoPainter();
+  const _AvatarDecoPainter({this.avatarIndex});
+
+  /// 内置头像下标；null = 画 V6.1 默认剪影（画廊 / 未设置头像 / 外链）。
+  final int? avatarIndex;
 
   // 确定性的「撕裂」噪声（sin 叠加），避免每次重绘抖动
   static double _noise(double s) =>
@@ -1642,22 +1651,37 @@ class _AvatarDecoPainter extends CustomPainter {
         ).createShader(photo),
     );
     // 默认头像剪影：半圆肩 + 蓝色圆形头（外圈 + 略亮内圈）
-    canvas.drawPath(
-      Path()
-        ..moveTo(44, 72)
-        ..cubicTo(46, 56, 54, 49, 64, 49)
-        ..cubicTo(74, 49, 82, 56, 84, 72)
-        ..close(),
-      Paint()..color = const Color(0xFF12295C),
-    );
-    canvas.drawOval(
-      Rect.fromCenter(center: const Offset(64, 34), width: 24, height: 27),
-      Paint()..color = const Color(0xFF1C3F7A),
-    );
-    canvas.drawOval(
-      Rect.fromCenter(center: const Offset(64, 32), width: 15, height: 17),
-      Paint()..color = const Color(0xFF2D5590),
-    );
+    // 注册时选了内置头像的用户画自绘矢量头像，其余保持设计稿剪影。
+    final avatar = avatarIndex == null
+        ? null
+        : kQBuiltinAvatars[avatarIndex!.clamp(0, kQBuiltinAvatars.length - 1)];
+    if (avatar == null) {
+      canvas.drawPath(
+        Path()
+          ..moveTo(44, 72)
+          ..cubicTo(46, 56, 54, 49, 64, 49)
+          ..cubicTo(74, 49, 82, 56, 84, 72)
+          ..close(),
+        Paint()..color = const Color(0xFF12295C),
+      );
+      canvas.drawOval(
+        Rect.fromCenter(center: const Offset(64, 34), width: 24, height: 27),
+        Paint()..color = const Color(0xFF1C3F7A),
+      );
+      canvas.drawOval(
+        Rect.fromCenter(center: const Offset(64, 32), width: 15, height: 17),
+        Paint()..color = const Color(0xFF2D5590),
+      );
+    } else {
+      // 40x40 头像放大 1.3 倍（52x52）放进照片区，上下留深蓝衬边。
+      canvas.save();
+      canvas.clipRect(photo);
+      canvas.translate(38, 13);
+      canvas.scale(1.3, 1.3);
+      QAvatarPainter(avatar.bg, avatar.skin, avatar.hair)
+          .paint(canvas, const Size(40, 40));
+      canvas.restore();
+    }
 
     // ---- 相框下部：3~4 条浅褐色手写波浪纹理线（canvas y≈48..72）----
     for (int i = 0; i < 4; i++) {
@@ -1726,5 +1750,6 @@ class _AvatarDecoPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant _AvatarDecoPainter old) => false;
+  bool shouldRepaint(covariant _AvatarDecoPainter old) =>
+      old.avatarIndex != avatarIndex;
 }

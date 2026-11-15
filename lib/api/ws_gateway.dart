@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'api_config.dart';
@@ -46,9 +47,11 @@ class QWsGateway {
     if (_manuallyClosed) return;
     try {
       final token = await _tokenProvider!();
-      final uri = Uri.parse(
-        '$_wsUrl?token=${Uri.encodeQueryComponent(token)}'
-        '&device_id=${Uri.encodeQueryComponent(deviceId)}',
+      final uri = Uri.parse(_wsUrl).replace(
+        queryParameters: <String, String>{
+          'token': token,
+          'device_id': deviceId,
+        },
       );
       final channel = WebSocketChannel.connect(uri);
       // 等握手结果：connect() 是惰性的，失败时 ready 会抛错。
@@ -72,7 +75,12 @@ class QWsGateway {
       );
       _startHeartbeat();
       _flush();
-    } catch (_) {
+    } catch (error) {
+      // 异常文本里可能带完整 URL（含 token），日志必须脱敏。
+      final safe = error
+          .toString()
+          .replaceAll(RegExp(r'token=[^&\s]+'), 'token=***');
+      if (kDebugMode) debugPrint('[QQ][WS] 握手失败：$safe');
       _setConnected(false);
       _scheduleRetry();
     }

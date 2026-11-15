@@ -1,7 +1,8 @@
 # QQ 概念版 · Flutter 交互前端
 
 按 `ui-v4.html` V6.1 高保真设计稿复刻的**可交互应用页面**（不是静态设计稿）。
-桌面优先，纯 Flutter SDK，运行时零第三方依赖。素材全部为自绘矢量替身。
+桌面优先，UI 全部用 Flutter SDK 自绘；素材全部为自绘矢量替身。
+运行时依赖仅 `http` / `web_socket_channel` 两个跨平台包（用于接入独立 API 工程）。
 
 ## 运行
 
@@ -101,6 +102,7 @@ Web URL 预设（用于逐状态核对）：
 |---|---|
 | 根路径 / `#demo` | 已登录，主面板 + 聊天 + 关于可见，好友管理/设置最小化 |
 | `#login` | 未登录，仅登录窗口 |
+| `#register` | 未登录，登录窗 + 注册窗（接真实 API） |
 | `#main` `#friends` `#menu` `#bamboo` | 主面板四态 |
 | `#chat` `#fm` `#settings` `#about` | 已登录并打开对应窗口 |
 | `?mode=design&shot=menu` | 设计稿对照（指定 shot） |
@@ -110,6 +112,9 @@ Web URL 预设（用于逐状态核对）：
 - `lib/core/tokens.dart` — 设计 token（尺寸 / 颜色 / 字阶 / 渐变）
 - `lib/core/widgets.dart` — 公共窗口壳、按钮、输入框、毛玻璃面板、自绘图标
 - `lib/core/models.dart` — 窗口 / 好友 / 消息数据模型
+- `lib/core/contacts.dart` — 关系链 DTO（分组 / 好友 / 申请 / 搜索结果）
+- `lib/core/avatars.dart` — 8 款内置自绘矢量头像与 `builtin://avatar/N` 编解码
+- `lib/core/profile.dart` — `QGender`（0 保密 / 1 男 / 2 女）与注册表单值对象
 - `lib/core/app_state.dart` — `ChangeNotifier` 状态（会话、窗口栈、消息、设置）
 - `lib/core/app_theme.dart` — 主窗口与原生子窗口共用的 Theme / 无系统滚动条行为
 - `lib/core/window_chrome.dart` — 原生窗口模式下关闭卡片外阴影的开关
@@ -117,7 +122,7 @@ Web URL 预设（用于逐状态核对）：
 - `lib/frontend/native_windows.dart` — 官方 Windowing API：控制台 + 全部独立 OS 窗口
 - `lib/frontend/window_content.dart` — 画布 / 原生窗口共用的窗口内容接线
 - `macos/Runner/AppDelegate.swift` — 引擎启动 + 无标题栏 / 透明背景 / 摆位 / 原生拖动
-- `lib/screens/*.dart` — 6 个屏幕、9 个界面状态
+- `lib/screens/*.dart` — 登录 / 注册 / 主面板 / 聊天 / 好友管理 / 设置 / 关于
 - `lib/app_shell.dart` — 设计稿对照画廊（非默认）
 - `docs/requirements.md` — **后端需求规格（落地版）**：需求编号 / 验收标准 / 接口契约 / 建表 DDL / 任务拆解
 - `docs/backend-requirements.md` — 后端选型论证与架构背景（配套阅读）
@@ -143,10 +148,118 @@ Web URL 预设（用于逐状态核对）：
 ## 状态与数据
 
 纯内存 `QAppState`：登录态、**窗口注册表**（画布与 OS 窗口的唯一真值源）、
-6 个好友、会话消息、5 项设置、`expandedGroup`（当前展开分组）、
+好友与分组、关系链（`contactGroups` / `contacts` / `friendRequests` /
+`searchResults`）、会话消息、5 项设置、`expandedGroup`（当前展开分组）、
 `panelTab`（三 tab）、`panelMenu`（主菜单）、`panelSettings`
-（面板 3D 翻转到设置背面）、toast。
-不接后端、不落盘、不请求网络；消息回复为本地模拟。
+（面板 3D 翻转到设置背面）、toast。不落盘。
+
+数据源有两套，UI 代码完全共用：
+
+- **真实 API**（默认，见下一节）：`QAppState.backend` 是一个 `QBackend`
+  接口实现，由 `lib/api/api_bridge.dart` 负责 REST + WS 同步；
+- **本地演示**（`QQ_USE_API=false` 或设计稿 URL 预设）：好友用 `kFriends`，
+  发消息触发 900ms 后的本地模拟回复，零网络请求。
+
+## 接入 API 服务端
+
+后端是**平级独立工程** `../qq-server/`（NodeJS / NestJS + MySQL + Redis），
+与 Flutter 代码零混用。先启动它：
+
+```bash
+cd ../qq-server
+npm install && npm run build && npm run migrate
+npm run seed          # 幂等：6 个分组 / 6 位好友 / 6 个会话与历史消息
+npm start             # http://127.0.0.1:3000/v1
+```
+
+演示账号 `10001` / `Passw0rd!`（其余好友 10002~10007 同密码）。
+
+客户端默认从登录窗起步时自动接入（`main.dart` 里 `preset == 'login'`）；
+设计稿画廊 / `#demo`、`#main` 等 URL 预设保持纯本地数据，方便逐屏对照。
+
+| dart-define | 默认 | 说明 |
+|---|---|---|
+| `QQ_USE_API` | `true` | 设 `false` 回到纯演示数据 |
+| `QQ_API_BASE` | 桌面 `http://127.0.0.1:3000/v1`；Web 同源推导 `:3000/v1` | 也可传 `/v1` 走 Nginx 同源代理 |
+| `QQ_DEMO_PASSWORD` | 空 | 自动化联调时预填登录密码，配合 `QQ_AUTO_LOGIN=true` |
+
+```bash
+# 桌面真机自动登录联调
+flutter run -d macos --dart-define=QQ_AUTO_LOGIN=true \
+  --dart-define=QQ_DEMO_PASSWORD='Passw0rd!'
+
+# 客户端对真实服务的集成测试（默认跳过，离线 flutter test 不受影响）
+NO_PROXY=127.0.0.1,localhost flutter test \
+  --dart-define=RUN_API_TEST=true \
+  test/api_integration_test.dart test/contacts_integration_test.dart
+```
+
+**接线清单**（`lib/api/`）
+
+| 能力 | 实现 |
+|---|---|
+| 登录 / 登出 | `POST /auth/login`、`/auth/logout`；JWT 内存保存，`401 TOKEN_EXPIRED` 自动 `refresh` 并重放请求 |
+| 注册 | 登录窗「注册新帐号」打开独立注册窗口（480×470），字段：登录帐号 / 用户昵称 / 登录密码 / 重复密码 / 性别 / 内置头像；`POST /auth/register` 提交昵称 + `gender` + `builtin://avatar/N`，成功即登录进主面板，头像显示在左上角相框 |
+| 好友分组 | `GET /friends` → `QFriendGroup` + `QFriend` + `QContactGroup`/`QContact`；同名好友沿用设计稿配色，新好友按名字取稳定色 |
+| 添加好友 / 申请 | `GET /users/search` → `POST /friend-requests` → `GET /friend-requests?direction=in\|out` → `accept` / `reject`；通过后自动重拉好友列表 |
+| 关系链实时通知 | 服务端 `friend_request.new` / `friend.accepted` / `friend_request.rejected` / `friend.deleted` 通过 WS 跨节点广播，客户端收到即 toast 提示并自动重拉关系链，无需重开窗口 |
+| 分组管理 | `POST /friend-groups`、`PATCH /friend-groups/{id}`（改名）、`DELETE /friend-groups/{id}`（好友回落未分组） |
+| 移动 / 删除好友 | `PATCH /friends/{userId}`（`group_id` 可为 `null`）、`DELETE /friends/{userId}` |
+| 会话 / 历史 / 已读 | 开窗时取或建单聊、拉 `limit=50` 历史并 `markRead`；`QMessage` 带 `seq` / `clientMsgId` / `pending` |
+| 实时收发 | WS `msg.send` → 乐观插入 → `msg.ack` 确认；`msg.new` 按 `conversation_id` 路由到对应聊天窗 |
+| 断线补偿 | `ready.seqs` 与本地 seq 比较，`after_seq` 补洞；WS 断线期间帧排队、指数退避重连（任意实例均可） |
+| 设置 | 设置页保存时一次 `PUT /settings`；登录时 `GET /settings` 回填 |
+| 顶号 / 在线 | `kick` 直接回登录窗并提示；`presence` 存入 `state.presence` |
+
+macOS 已加 `NSAppTransportSecurity/NSAllowsLocalNetwork`（放行本机明文 HTTP）
+与 `com.apple.security.network.client`（沙箱出站）；生产应改用 HTTPS。
+服务不可达时登录失败会在登录窗底部内联显示错误，不会偷偷进入假数据主面板。
+
+## 注册窗口
+
+登录窗「注册新帐号」弹出独立 OS 窗口（480×470，深色玻璃 / 细线按钮，与好友管理
+浮层同语言）。字段与行为：
+
+| 字段 | 规则 |
+|---|---|
+| 登录帐号 | 3~32 位，仅字母 / 数字 / `_` / `.` / `-` |
+| 用户昵称 | 1~32 位（为空时服务端回落为帐号） |
+| 登录密码 | 至少 6 位 |
+| 重复登录密码 | 必须与密码一致 |
+| 性别 | 保密（默认）/ 男 / 女，映射服务端 `gender` 0 / 1 / 2 |
+| 头像 | 8 款内置自绘矢量（`builtin://avatar/0..7`），左侧大图实时预览 |
+
+提交前先本地校验（逐项中文提示，不请求服务）；通过后 `POST /auth/register` 落库
+并**注册即登录**，登录窗 + 注册窗销毁 → 主面板创建，所选头像显示在左上角相框
+（`builtin://avatar/N` → 配色回填）。`QQ_USE_API=false` 或离线时提交会内联提示
+「注册需要连接 API 服务」，不会进入假数据。资料字段服务端只做字符串透传，客户端
+用 `lib/core/avatars.dart` 解析绘制，不依赖任何真实图片素材。
+
+## 添加好友与好友分组
+
+好友管理窗口（959×597 木质桌面）现在是**真实数据驱动**；气泡球显示服务端分组
+与人数，照片卡显示当前分组的真实好友，右上信息卡显示选中好友资料。
+`#design` 画廊仍保留 V6.1 的 7 个静态气泡 / 13 张照片卡用于逐屏对照。
+
+| 入口 | 动作 |
+|---|---|
+| 主面板「+」 | 打开好友管理窗口并直接进入「添加好友」 |
+| 标题栏「+ 添加好友」 | 按帐号 / 昵称搜人 → 点「添加」发送带附言的申请 |
+| 标题栏「好友申请 (N)」 | 收到的申请可「通过 / 拒绝」，发出的申请可查看状态 |
+| 标题栏「分组管理」 | 新建、改名、删除分组；删除后组内好友回落「未分组」 |
+| 点击气泡球 | 按分组筛选照片卡（「全部好友」= 不筛选） |
+| 长按 / 右键气泡球 | 直接改名该分组（系统「未分组」则打开分组管理） |
+| 点击照片卡 | 右上信息卡显示资料，同时打开聊天窗 |
+| 长按 / 右键照片卡 | 好友操作：打开聊天、移动到分组、移回未分组、删除好友 |
+| 第二栏搜索框 | 按昵称 / 帐号 / 签名实时过滤照片卡 |
+
+数据流：`QAppState` → `QBackend` 抽象 → `QApiBridge`（REST 写操作成功后自动
+重拉 `/friends` 并回填主面板）。关系链变更（来申请 / 对方同意 / 被拒 / 被删）
+由服务端通过 WS `friend_*` 帧实时推送，客户端 toast 提示并自动重拉，双方无需
+刷新窗口即可看到最新好友与申请。不接 API 时（`QQ_USE_API=false` 或画廊预设）
+走本地内存兜底，同样能完整演示「搜索 → 申请 → 通过 → 分组 → 移动 → 删除」
+链路。浮层对话框在 `lib/screens/contacts_dialogs.dart`，状态与离线兜底在
+`lib/core/app_state.dart`，DTO 在 `lib/core/contacts.dart`。
 
 ## 验证
 
@@ -165,6 +278,18 @@ Web URL 预设（用于逐状态核对）：
 - 截图：`../refs/flutter/f2/`，总览 `f2_overview.png`
 - `NO_PROXY=127.0.0.1,localhost flutter test` → All tests passed
   （不加 NO_PROXY 时本机代理会拦 flutter_tester 的 WebSocket 升级，非代码问题）
+- **真实 API 集成测试**（`test/api_integration_test.dart`，打本机 3000）：
+  登录 → 6 位好友 / 6 分组 / 6 会话历史回填 → 打开会话 → 发消息 `msg.ack`
+  确认 pending → 另一账号 WS 发消息本端实时收到 → 服务端 REST 查到落库
+  → 设置写后读回 → 登出，全通过
+- **macOS 真机自动登录联调**：`[QQ][API] 登录成功：6 位好友 / 6 个分组 /
+  6 个会话` → 主面板独立窗创建 → `WS 已连接`；`info` 自检
+  `borderless:true / styleMask:0 / shadow:false / bgAlpha:0 / key:true`，
+  窗口出现时序与透明修复无回归
+- **Web 无头浏览器冒烟**：`POST /auth/login` 201、`/friends`、
+  `/conversations`、6 个 `messages`、`/settings`、`/users/me` 全部 200，
+  `ws://127.0.0.1:3000/ws` 握手成功，console/pageerror = NONE；
+  截图确认主面板显示服务端分组，展开「大学好友(2/6)」显示苏禾 / 阿澈
 - 独立窗口改造后 Web 单画布回归：Playwright 无头真实加载 + 展开分组 + tab 切换，
   console/pageerror = NONE，截图 `../verify/native_web_smoke.png`
 - 拖拽 / 异形透明修复（`docs/multiwindow-analysis.md` §10）：
@@ -179,12 +304,51 @@ Web URL 预设（用于逐状态核对）：
   `info` 自检 `{class: QQBorderlessWindow, styleMask: 0, borderless: true,
   shadow: false, canKey: true}`；窗口抓图上边缘 alpha≈0（无描边），
   整屏截图里木框/云叶四周直接是控制台壁纸
+- **关系链功能（添加好友 / 好友分组）**：
+  `test/contacts_state_test.dart` 离线全链路 + 浮层 + 画廊回归 3 项通过；
+  `test/contacts_integration_test.dart` 用两个全新注册账号打真实 MySQL 服务
+  （搜人 → 申请 → 对方通过 → 建/改/删分组 → 移动/删好友）通过；
+  `flutter analyze` / `flutter test`（4 通过、2 个真实服务测试默认跳过）/
+  `flutter build web` / `flutter build macos` 全绿
+- **关系链实时通知（WS 推送，无需手动刷新）**：
+  `test/friend_notify_integration_test.dart`（`RUN_API_TEST=true`）用两个真实账号
+  验证：A 发申请 → B 端 `friend_request.new` 触发（申请数即时 +1）→ B 同意 →
+  A 端 `friend.accepted` 触发（好友列表即时出现 B）→ B 删好友 → A 端
+  `friend.deleted` 触发（好友列表即时移除），全流程不手动 refresh
+- **注册窗口（本次新增）**：
+  `test/register_state_test.dart` 头像编解码、表单校验、性别枚举、注册窗开关、
+  离线拒绝、6 字段渲染 + 本地校验 6 项通过；
+  `test/register_integration_test.dart`（`RUN_API_TEST=true`）注册 `r<suffix>`
+  带昵称 / 性别 / 内置头像，`/users/me` 回读 `gender` 与 `builtin://avatar/N`
+  一致；服务端 `V2__user_gender.sql` 迁移 + 单测 9 + e2e 3（含 `gender` 越界
+  校验）全绿；`smoke.ts` 新增「注册资料跨实例一致」断言
+- **Web 无头注册交互冒烟**（`?preset=register`，console/pageerror = NONE）：
+  填 6 字段 → 选「男」+ 第 6 个头像 → 注册并登录；MySQL 回查确认
+  `account` / `nickname='自动化注册'` / `gender=1` / `avatar_url='builtin://avatar/5'`
+  落库。截图：`../verify/qq_register_initial.png`、`../verify/qq_register_filled.png`、
+  `../verify/qq_register_after_login.png`
+- **Web 无头交互回归**（`#fm`，console/pageerror = NONE）：
+  浮层打开 → 搜 `10009` 命中「许知远」→ 点「添加」出现
+  「好友申请已发送」→ 好友申请「发出的 (1)」→ 通过「沈星回」后
+  「全部好友 (7)」且照片卡新增「沈星回」→ 分组管理 6 行 + 新建「同事」
+  后标题栏变「7 个分组」并出现「共 7 个分组 · 点此管理」。
+  截图：`../verify/qq_contacts_overview.png`、
+  `../verify/qq_contacts_add_friend.png`、`../verify/qq_contacts_requests.png`、
+  `../verify/qq_contacts_groups.png`、`../verify/qq_contacts_accepted.png`、
+  `../verify/qq_contacts_group_created.png`
 
 ## 已知限制
 
 - 内容窗口为 `floating` 层级以获得稳定置前效果，切换其它应用时仍会浮在其上方
-- 原生窗口仍保留 `.titled` styleMask 与系统阴影（保证可成为 key 窗口），
-  但 NSTitlebarView / 红黄绿按钮已隐藏，视觉上无原生 chrome
+- 原生内容窗口已转为 **borderless**（`styleMask = 0`、`hasShadow = false`），
+  通过 `method_setImplementation` 补 `canBecomeKey*` 保证输入框仍可聚焦；
+  详见 `docs/multiwindow-analysis.md` §11 / §12
+- 好友管理页已消费 API（气泡 / 照片卡 / 搜索 / 信息卡 + 添加好友、好友申请、
+  分组增删改、移动与删除好友）；设计稿画廊仍保留静态对照。
+  气泡球沿用设计稿固定 7 位，最多展示 6 个真实分组，更多分组从
+  「分组管理」浮层或木桌左上提示进入
+- 仍未做：好友备注编辑 UI（后端 `PATCH /friends/{id}` 已支持 `remark`）、
+  图片消息 / 群聊 / 消息撤回、token 持久化与本地消息缓存（M2）
 - 拖动交给 Window Server 后，拖动期间 Flutter 收不到 pointer up，
   属正常现象（标题栏拖拽条不带状态，下一次按下会重置）
 - 内容窗口是 borderless 且关掉了系统阴影，窗口之间没有系统投影；

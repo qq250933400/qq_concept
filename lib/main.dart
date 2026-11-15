@@ -1,14 +1,16 @@
 import 'package:flutter/material.dart';
 
+import 'api/api_bridge.dart';
+import 'api/api_config.dart';
 import 'app_shell.dart';
 import 'core/app_state.dart';
 import 'core/app_theme.dart';
-import 'core/models.dart';
 import 'frontend/desktop.dart';
 import 'frontend/native_windows.dart';
 
 const Set<String> _presets = {
   'login',
+  'register',
   'main',
   'friends',
   'menu',
@@ -59,6 +61,12 @@ void main() {
       ? _kPresetOverride
       : (windowing ? 'login' : _readPreset());
   final state = QAppState(preset: preset);
+  // 只有「从登录窗起步」的真实产品流程接后端；#demo/#main 等 URL 预设
+  // 仍是设计稿画廊，保持纯本地数据，方便逐屏对照与离线演示。
+  if (kApiEnabled && (preset == 'login' || preset == 'register')) {
+    state.backend = QApiBridge(state);
+    if (kDemoPassword.isNotEmpty) state.setPassword(kDemoPassword);
+  }
   final native = QNativeWindows.tryCreate(state);
   if (native != null) {
     runWidget(NativeWindowsRoot(state: state, native: native));
@@ -96,11 +104,15 @@ class _NativeWindowsRootState extends State<NativeWindowsRoot> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         if (_kAutoLogin) {
-          widget.state.setPassword('demo');
+          // API 模式必须用真实演示密码；纯 mock 模式保留 'demo'。
+          widget.state.setPassword(
+            kDemoPassword.isNotEmpty ? kDemoPassword : 'demo',
+          );
           widget.state.login();
         }
         for (final friend in _readInitialChats()) {
-          widget.state.open(QWindowKind.chat, friend: friend);
+          // selectFriend 会同时创建聊天窗并拉取该会话的历史消息。
+          widget.state.selectFriend(friend);
         }
       });
     }
@@ -149,6 +161,16 @@ class _QQConceptAppState extends State<QQConceptApp> {
         fragment == 'design' ||
         fragment == 'gallery' ||
         Uri.base.queryParameters['mode'] == 'design';
+    // 与窗口化模式一致的开发钩子：web 自动化冒烟时可直接走真实登录。
+    if (_kAutoLogin && !_state.loggedIn) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _state.setPassword(
+          kDemoPassword.isNotEmpty ? kDemoPassword : 'demo',
+        );
+        _state.login();
+      });
+    }
   }
 
   @override
@@ -162,6 +184,7 @@ class _QQConceptAppState extends State<QQConceptApp> {
       theme: qqTheme(),
       home: _design
           ? AppShell(
+              state: _state,
               onExitDesign: () => setState(() => _design = false),
               initialShot: Uri.base.queryParameters['shot'],
             )

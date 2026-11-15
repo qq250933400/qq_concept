@@ -2,12 +2,13 @@ import 'package:flutter/material.dart';
 
 import 'tokens.dart';
 
-/// 前端窗口类型。设计稿的九个 shot 收敛成 6 类真实窗口：
+/// 前端窗口类型。设计稿的九个 shot 收敛成 7 类真实窗口：
 /// 主面板四态（默认/好友/菜单/竹叶）是一个窗口的四种内部状态。
-enum QWindowKind { login, panel, chat, friendsManager, settings, about }
+enum QWindowKind { login, register, panel, chat, friendsManager, settings, about }
 
 String qWindowTitle(QWindowKind kind, [String? friend]) => switch (kind) {
   QWindowKind.login => '登录',
+  QWindowKind.register => '注册',
   QWindowKind.panel => '主面板',
   QWindowKind.chat => friend == null ? '聊天' : '与 $friend 聊天',
   QWindowKind.friendsManager => '好友管理',
@@ -17,6 +18,7 @@ String qWindowTitle(QWindowKind kind, [String? friend]) => switch (kind) {
 
 Size qWindowSize(QWindowKind kind) => switch (kind) {
   QWindowKind.login => const Size(S.loginCanvasW, S.loginCanvasH),
+  QWindowKind.register => const Size(S.regW, S.regH),
   QWindowKind.panel => const Size(S.mainCanvasW, S.mainCanvasH),
   QWindowKind.chat => const Size(S.chatW, S.chatH),
   QWindowKind.friendsManager => const Size(S.fmW, S.fmH),
@@ -28,6 +30,7 @@ Size qWindowSize(QWindowKind kind) => switch (kind) {
 /// 登录/主面板的窗口本体分别下沉 42/32，故条带要覆盖到标题栏底部。
 double qDragHeight(QWindowKind kind) => switch (kind) {
   QWindowKind.login => S.loginWinTop + S.loginTitleH,
+  QWindowKind.register => S.dlgBarH,
   QWindowKind.panel => S.mainWinTop + S.glassHeadH,
   QWindowKind.chat => S.chatTitleH,
   QWindowKind.friendsManager => S.fmTitleH + S.fmBar2H,

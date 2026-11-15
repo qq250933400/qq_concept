@@ -19,13 +19,17 @@ class ApiUser {
       account = _s(j, 'account'),
       nickname = _s(j, 'nickname'),
       avatarUrl = j['avatar_url']?.toString(),
-      signature = j['signature']?.toString();
+      signature = j['signature']?.toString(),
+      gender = _i(j['gender']);
 
   final String id;
   final String account;
   final String nickname;
   final String? avatarUrl;
   final String? signature;
+
+  /// 0 保密 / 1 男 / 2 女（与 core/profile.dart 的 QGender 对齐）。
+  final int gender;
 }
 
 class ApiFriend {
@@ -78,6 +82,7 @@ class ApiConversation {
 class ApiMessage {
   ApiMessage.fromJson(Map<String, dynamic> j)
     : id = _s(j, 'id'),
+      conversationId = _s(j, 'conversation_id'),
       seq = _i(j['seq']),
       senderId = _s(j, 'sender_id'),
       clientMsgId = j['client_msg_id']?.toString(),
@@ -90,6 +95,7 @@ class ApiMessage {
       revoked = j['revoked_at'] != null;
 
   final String id;
+  final String conversationId;
   final int seq;
   final String senderId;
   final String? clientMsgId;

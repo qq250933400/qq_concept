@@ -8,6 +8,7 @@ import '../screens/chat_screen.dart';
 import '../screens/friends_manager_screen.dart';
 import '../screens/login_screen.dart';
 import '../screens/main_panel.dart';
+import '../screens/register_screen.dart';
 import '../screens/settings_screen.dart';
 import 'panel_flip.dart';
 
@@ -27,13 +28,25 @@ Widget buildQWindowContent(
         account: st.account,
         password: st.password,
         remember: st.remember,
+        busy: st.apiBusy,
+        statusText: st.apiBusy
+            ? '正在连接服务…'
+            : (st.authError ??
+                (st.backend == null ? null : 'API 服务已就绪')),
+        statusError: st.authError != null,
         onAccountChanged: st.setAccount,
         onPasswordChanged: st.setPassword,
         onRememberChanged: st.setRemember,
         onLogin: st.login,
-        onRegister: () => st.flash('注册新帐号暂未接入（前端演示）'),
+        onRegister: st.openRegisterWindow,
         onMinimize: () => onWindowButton(QWinBtnKind.minimize),
         onClose: () => onWindowButton(QWinBtnKind.close),
+      );
+
+    case QWindowKind.register:
+      return RegisterScreen(
+        state: st,
+        onButtonTap: onWindowButton,
       );
 
     case QWindowKind.panel:
@@ -47,12 +60,17 @@ Widget buildQWindowContent(
         onFooterAction: st.handleMenuAction,
         onWindowButton: onWindowButton,
         onSearchChanged: st.setSearchQuery,
-        onAddTap: () => st.flash('添加好友暂未接入（前端演示）'),
+        // 主面板「+」：打开好友管理窗口并直接进入添加好友流程。
+        onAddTap: st.openAddFriend,
         onGroupTap: st.toggleGroup,
         onMainMenuTap: st.toggleMainMenu,
         selectedName: st.activeFriend,
         searchQuery: st.searchQuery,
         expandedGroup: st.expandedGroup,
+        friendGroups: st.friendGroups,
+        friends: st.friends,
+        // 注册时选的内置头像登录后显示在左上角相框（null = 设计稿默认剪影）。
+        myAvatarIndex: st.myAvatarIndex,
       );
       // 设置页作为面板背面：绕 Y 轴 3D 翻转进入，返回键反向翻回。
       return PanelFlip(
@@ -82,6 +100,7 @@ Widget buildQWindowContent(
 
     case QWindowKind.friendsManager:
       return FriendsManagerScreen(
+        state: st,
         onButtonTap: onWindowButton,
         onFriendTap: st.selectFriend,
       );
@@ -121,6 +140,7 @@ Widget _settings(
     },
     onToggle: st.setSetting,
     onSave: () {
+      st.commitSettings();
       st.flash('设置已保存');
       if (flipped) {
         st.closePanelSettings();

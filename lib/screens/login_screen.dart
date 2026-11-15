@@ -25,6 +25,9 @@ class LoginScreen extends StatefulWidget {
     this.onRegister,
     this.onMinimize,
     this.onClose,
+    this.busy = false,
+    this.statusText,
+    this.statusError = false,
   });
 
   /// 不传任何回调时，渲染与 V6.1 设计稿完全一致（gallery 模式）。
@@ -38,6 +41,11 @@ class LoginScreen extends StatefulWidget {
   final VoidCallback? onRegister;
   final VoidCallback? onMinimize;
   final VoidCallback? onClose;
+
+  /// 真实 API 模式：登录请求进行中禁用按钮，并在窗口底部显示错误 / 状态。
+  final bool busy;
+  final String? statusText;
+  final bool statusError;
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -378,7 +386,7 @@ class _LoginScreenState extends State<LoginScreen>
               width: S.loginRegW,
               height: S.loginBtnH,
               radius: BorderRadius.circular(4),
-              onTap: widget.onRegister,
+              onTap: widget.busy ? null : widget.onRegister,
             ),
           ),
           // 状态 + 登录：紧贴的组合按钮，中间仅一条竖线感
@@ -434,9 +442,30 @@ class _LoginScreenState extends State<LoginScreen>
               width: S.loginLoginW,
               height: S.loginBtnH,
               radius: const BorderRadius.horizontal(right: Radius.circular(4)),
-              onTap: widget.onLogin,
+              onTap: widget.busy ? null : widget.onLogin,
             ),
           ),
+
+          // 底部留白区（按钮下沿 32px 以下）显示连接状态 / 错误，
+          // 只在接了后端时出现，设计稿画廊与静态预览完全不受影响。
+          if (widget.statusText != null && widget.statusText!.isNotEmpty)
+            Positioned(
+              left: 12,
+              right: 12,
+              bottom: 6,
+              child: Text(
+                widget.statusText!,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: QText.of(
+                  10,
+                  color: widget.statusError
+                      ? const Color(0xFFB23B2E)
+                      : const Color(0xFF5A6166),
+                ),
+              ),
+            ),
         ],
       ),
     );

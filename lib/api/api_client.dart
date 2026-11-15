@@ -82,7 +82,7 @@ class QApiClient {
         refreshToken != null) {
       try {
         await refresh();
-        return _request(method, path,
+        return await _request(method, path,
             body: body, query: query, auth: auth, retried: true);
       } catch (_) {
         clearTokens();
@@ -115,6 +115,8 @@ class QApiClient {
     String account,
     String password, {
     String? nickname,
+    int gender = 0,
+    String? avatarUrl,
   }) =>
       _request('POST', '/auth/register', auth: false, body: <String, dynamic>{
         'account': account,
@@ -122,6 +124,8 @@ class QApiClient {
         'nickname': (nickname == null || nickname.trim().isEmpty)
             ? account
             : nickname.trim(),
+        'gender': gender,
+        if (avatarUrl != null) 'avatar_url': avatarUrl,
       });
 
   Future<Map<String, dynamic>> login(String account, String password) async {
@@ -193,9 +197,14 @@ class QApiClient {
     return qList(json['items']);
   }
 
-  Future<Map<String, dynamic>> createFriendRequest(String toAccount) =>
-      _request('POST', '/friend-requests',
-          body: <String, dynamic>{'to_account': toAccount});
+  Future<Map<String, dynamic>> createFriendRequest(
+    String toAccount, {
+    String message = '',
+  }) =>
+      _request('POST', '/friend-requests', body: <String, dynamic>{
+        'to_account': toAccount,
+        if (message.trim().isNotEmpty) 'message': message.trim(),
+      });
 
   Future<List<Map<String, dynamic>>> friendRequests(
       [String direction = 'in']) async {
@@ -207,19 +216,36 @@ class QApiClient {
   Future<Map<String, dynamic>> acceptRequest(String id) =>
       _request('POST', '/friend-requests/$id/accept');
 
+  Future<Map<String, dynamic>> rejectRequest(String id) =>
+      _request('POST', '/friend-requests/$id/reject');
+
   Future<Map<String, dynamic>> createGroup(String name, int sort) =>
       _request('POST', '/friend-groups',
           body: <String, dynamic>{'name': name, 'sort': sort});
 
+  Future<Map<String, dynamic>> renameGroup(String id, String name) =>
+      _request('PATCH', '/friend-groups/$id',
+          body: <String, dynamic>{'name': name});
+
+  Future<Map<String, dynamic>> deleteGroup(String id) =>
+      _request('DELETE', '/friend-groups/$id');
+
+  /// [clearGroup] 为 true 时显式传 `group_id: null`，把好友移回「未分组」。
+  /// 不能靠 `groupId == null` 判断：那同时表示「本次不修改分组」。
   Future<Map<String, dynamic>> patchFriend(
     String friendId, {
     String? groupId,
     String? remark,
+    bool clearGroup = false,
   }) =>
       _request('PATCH', '/friends/$friendId', body: <String, dynamic>{
         if (groupId != null) 'group_id': groupId,
+        if (clearGroup) 'group_id': null,
         if (remark != null) 'remark': remark,
       });
+
+  Future<Map<String, dynamic>> deleteFriend(String friendId) =>
+      _request('DELETE', '/friends/$friendId');
 
   // ------------------------------------------------------------ 会话 / 消息
   Future<Map<String, dynamic>> conversations() =>

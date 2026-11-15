@@ -4,5 +4,8 @@
 <dict>
 	<key>com.apple.security.app-sandbox</key>
 	<true/>
+	<!-- 沙箱下访问 API 服务必须显式允许出站连接。 -->
+	<key>com.apple.security.network.client</key>
+	<true/>
 </dict>
 </plist>

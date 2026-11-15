@@ -846,14 +846,15 @@ class AvatarPlaceholder extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => SizedBox(
-    width: size,
-    height: size,
-    child: CustomPaint(painter: _AvatarPainter(bg, skin, hair)),
-  );
+      width: size,
+      height: size,
+      child: CustomPaint(painter: QAvatarPainter(bg, skin, hair)),
+    );
 }
 
-class _AvatarPainter extends CustomPainter {
-  const _AvatarPainter(this.bg, this.skin, this.hair);
+/// 自绘矢量头像（40x40 基准，可缩放）。公开给注册窗预览与主面板相框复用。
+class QAvatarPainter extends CustomPainter {
+  const QAvatarPainter(this.bg, this.skin, this.hair);
   final Color bg;
   final Color skin;
   final Color hair;
@@ -886,6 +887,6 @@ class _AvatarPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant _AvatarPainter old) =>
+  bool shouldRepaint(covariant QAvatarPainter old) =>
       old.bg != bg || old.skin != skin || old.hair != hair;
 }

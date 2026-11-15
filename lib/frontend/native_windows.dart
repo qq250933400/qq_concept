@@ -49,6 +49,7 @@ const MethodChannel _kWindowChannel = MethodChannel('qq_concept/windows');
 /// 屏幕分辨率（换了显示器也不会再算错）。
 String _anchorFor(QWindowKind kind) => switch (kind) {
   QWindowKind.login => 'center',
+  QWindowKind.register => 'center',
   QWindowKind.panel => 'top-right',
   QWindowKind.chat => 'cascade',
   QWindowKind.settings => 'center-right',

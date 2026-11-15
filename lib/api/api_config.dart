@@ -34,16 +34,17 @@ String qResolveApiBase() {
 }
 
 /// 网关挂在 HTTP server 根路径 `/ws`（不随全局 `v1` 前缀）。
+///
+/// 必须显式构造：用 `Uri.replace(fragment: '')` 会留下一个空的 `#`，
+/// 后续再拼 `?token=...` 时查询参数会被当成 fragment，服务端收不到 token。
 String qResolveWsUrl(String apiBase) {
   final uri = Uri.parse(apiBase);
-  return uri
-      .replace(
-        scheme: uri.scheme == 'https' ? 'wss' : 'ws',
-        path: '/ws',
-        query: '',
-        fragment: '',
-      )
-      .toString();
+  return Uri(
+    scheme: uri.scheme == 'https' ? 'wss' : 'ws',
+    host: uri.host,
+    port: uri.hasPort ? uri.port : null,
+    path: '/ws',
+  ).toString();
 }
 
 /// 本进程稳定的设备标识，登录与 WS 握手必须使用同一个值。
