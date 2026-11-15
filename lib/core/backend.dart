@@ -1,4 +1,5 @@
 import 'profile.dart';
+import 'models.dart';
 
 /// 状态层与真实后端之间的抽象边界。
 ///
@@ -25,6 +26,8 @@ abstract class QBackend {
 
   /// 设置页「保存」时批量写入。
   Future<void> saveSettings(Map<String, bool> values);
+
+  Future<void> setPresence(QPresence status);
 
   // ---------------------------------------------------------------- 关系链
   /// 重新拉取分组 + 好友 + 收到的/发出的申请（登录、窗口打开、写操作后）。

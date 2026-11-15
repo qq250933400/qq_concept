@@ -12,6 +12,78 @@ enum QWinBtnKind { gear, back, minimize, maximize, close }
 /// 三角形方向
 enum QTriDir { up, down, right, left }
 
+class QButtonInteraction extends StatefulWidget {
+  const QButtonInteraction({
+    super.key,
+    required this.child,
+    this.onTap,
+    this.borderRadius = const BorderRadius.all(Radius.circular(4)),
+  });
+
+  final Widget child;
+  final VoidCallback? onTap;
+  final BorderRadius borderRadius;
+
+  @override
+  State<QButtonInteraction> createState() => _QButtonInteractionState();
+}
+
+class _QButtonInteractionState extends State<QButtonInteraction> {
+  bool _hovered = false;
+  bool _pressed = false;
+
+  @override
+  void didUpdateWidget(QButtonInteraction oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.onTap == null) {
+      _hovered = false;
+      _pressed = false;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.onTap == null) return widget.child;
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.onTap,
+        onTapDown: (_) => setState(() => _pressed = true),
+        onTapUp: (_) => setState(() => _pressed = false),
+        onTapCancel: () => setState(() => _pressed = false),
+        child: AnimatedScale(
+          scale: _pressed ? .97 : 1,
+          duration: const Duration(milliseconds: 80),
+          child: Stack(
+            fit: StackFit.passthrough,
+            children: [
+              widget.child,
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 80),
+                    decoration: BoxDecoration(
+                      borderRadius: widget.borderRadius,
+                      color: _pressed
+                          ? const Color(0x33000000)
+                          : _hovered
+                              ? const Color(0x33FFFFFF)
+                              : Colors.transparent,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// ============================================================================
 /// 细线窗口按钮
 /// ============================================================================
@@ -38,13 +110,7 @@ class LineWinButton extends StatelessWidget {
       height: size,
       child: CustomPaint(painter: _LineWinBtnPainter(kind, color, strokeWidth)),
     );
-    return onTap == null
-        ? btn
-        : GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: onTap,
-            child: btn,
-          );
+    return QButtonInteraction(onTap: onTap, child: btn);
   }
 }
 
@@ -361,13 +427,7 @@ class MetalButton extends StatelessWidget {
         ),
       ),
     );
-    return onTap == null
-        ? widget
-        : GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: onTap,
-            child: widget,
-          );
+    return QButtonInteraction(onTap: onTap, child: widget);
   }
 }
 
@@ -420,13 +480,11 @@ class BeigeButton extends StatelessWidget {
         ],
       ),
     );
-    return onTap == null
-        ? widget
-        : GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: onTap,
-            child: widget,
-          );
+    return QButtonInteraction(
+      onTap: onTap,
+      borderRadius: radius,
+      child: widget,
+    );
   }
 }
 

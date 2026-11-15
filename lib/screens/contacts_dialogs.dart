@@ -140,8 +140,7 @@ Widget _button(
       : danger
           ? <Color>[const Color(0xFF9B443A), const Color(0xFF6B2A24)]
           : <Color>[const Color(0xFF3C7391), const Color(0xFF234A60)];
-  return GestureDetector(
-    behavior: HitTestBehavior.opaque,
+  return QButtonInteraction(
     onTap: onTap,
     child: Container(
       width: width,

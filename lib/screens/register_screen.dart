@@ -223,8 +223,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     final colors = selected
         ? const <Color>[Color(0xFF2E5363), Color(0xFF122C39)]
         : const <Color>[Color(0xFFECE8DA), Color(0xFFD9D3C2)];
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
+    return QButtonInteraction(
       onTap: widget.state.registerBusy
           ? null
           : () => setState(() => _gender = g),

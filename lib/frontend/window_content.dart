@@ -31,8 +31,7 @@ Widget buildQWindowContent(
         busy: st.apiBusy,
         statusText: st.apiBusy
             ? '正在连接服务…'
-            : (st.authError ??
-                (st.backend == null ? null : 'API 服务已就绪')),
+            : (st.authError ?? (st.backend == null ? null : 'API 服务已就绪')),
         statusError: st.authError != null,
         onAccountChanged: st.setAccount,
         onPasswordChanged: st.setPassword,
@@ -44,10 +43,7 @@ Widget buildQWindowContent(
       );
 
     case QWindowKind.register:
-      return RegisterScreen(
-        state: st,
-        onButtonTap: onWindowButton,
-      );
+      return RegisterScreen(state: st, onButtonTap: onWindowButton);
 
     case QWindowKind.panel:
       final panel = MainPanel(
@@ -69,6 +65,13 @@ Widget buildQWindowContent(
         expandedGroup: st.expandedGroup,
         friendGroups: st.friendGroups,
         friends: st.friends,
+        myPresence: st.visibleMyPresence,
+        friendPresence: st.backend == null
+            ? null
+            : (st.backendConnected ? st.presence : const <String, QPresence>{}),
+        onPresenceChanged: st.presenceBusy ? null : st.changePresence,
+        displayName: st.backend == null ? 'wzw' : st.displayName,
+        signature: st.backend == null ? '若不在连，请留言或邮件至' : st.signature,
         // 注册时选的内置头像登录后显示在左上角相框（null = 设计稿默认剪影）。
         myAvatarIndex: st.myAvatarIndex,
       );
@@ -76,12 +79,7 @@ Widget buildQWindowContent(
       return PanelFlip(
         flipped: st.panelSettings,
         front: panel,
-        back: _settings(
-          st,
-          w,
-          flipped: true,
-          onWindowButton: onWindowButton,
-        ),
+        back: _settings(st, w, flipped: true, onWindowButton: onWindowButton),
       );
 
     case QWindowKind.chat:
@@ -106,12 +104,7 @@ Widget buildQWindowContent(
       );
 
     case QWindowKind.settings:
-      return _settings(
-        st,
-        w,
-        flipped: false,
-        onWindowButton: onWindowButton,
-      );
+      return _settings(st, w, flipped: false, onWindowButton: onWindowButton);
 
     case QWindowKind.about:
       return AboutScreen(

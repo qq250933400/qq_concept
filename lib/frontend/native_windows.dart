@@ -98,6 +98,7 @@ class _WindowLifecycleDelegate with WindowControllerDelegate {
 class QNativeWindows extends ChangeNotifier {
   QNativeWindows._(this.state) {
     state.addListener(_sync);
+    state.onIncomingNotification = _notifyIncoming;
   }
 
   final QAppState state;
@@ -137,6 +138,22 @@ class QNativeWindows extends ChangeNotifier {
   }
 
   int get count => _windows.length;
+
+  void _notifyIncoming(String title, String body, String? chatId, bool sound) {
+    final window = chatId == null ? null : _windows[chatId];
+    final handle = window == null ? null : _handleOf(window.controller);
+    _kWindowChannel
+        .invokeMethod<void>('notify', <String, dynamic>{
+          'title': title,
+          'body': body,
+          'sound': sound,
+          if (handle != null) 'handle': handle,
+        })
+        .catchError((Object error) {
+          debugPrint('[QQ] 通知失败：$error');
+          state.flash('通知失败：$error');
+        });
+  }
 
   bool get isEmpty => _windows.isEmpty;
 
@@ -231,7 +248,9 @@ class QNativeWindows extends ChangeNotifier {
         Future<void>.delayed(const Duration(milliseconds: 800), () {
           if (_disposed || !_windows.containsKey(e.id)) return;
           final h = _handleOf(e.controller);
-          if (h != null) _invoke('info', <String, dynamic>{'handle': h}, log: true);
+          if (h != null) {
+            _invoke('info', <String, dynamic>{'handle': h}, log: true);
+          }
         });
       }
     } catch (error) {
@@ -285,19 +304,24 @@ class QNativeWindows extends ChangeNotifier {
       onReady?.call();
       return;
     }
-    _invoke('setup', <String, dynamic>{
-      'handle': handle,
-      'width': e.size.width,
-      'height': e.size.height,
-      // 原生按 NSScreen.visibleFrame 换算锚点，cascade 用 index 做阶梯错开。
-      'anchor': _anchorFor(e.kind),
-      'index': index,
-      'floating': false,
-      'resize': true,
-      // 内容窗口是异形 + 真透明：系统矩形阴影会从透明像素里透出来
-      // （看起来像蒙了一层浅灰），必须关掉。
-      'shadow': false,
-    }, log: true, onDone: onReady);
+    _invoke(
+      'setup',
+      <String, dynamic>{
+        'handle': handle,
+        'width': e.size.width,
+        'height': e.size.height,
+        // 原生按 NSScreen.visibleFrame 换算锚点，cascade 用 index 做阶梯错开。
+        'anchor': _anchorFor(e.kind),
+        'index': index,
+        'floating': false,
+        'resize': true,
+        // 内容窗口是异形 + 真透明：系统矩形阴影会从透明像素里透出来
+        // （看起来像蒙了一层浅灰），必须关掉。
+        'shadow': false,
+      },
+      log: true,
+      onDone: onReady,
+    );
   }
 
   /// `setup` 的 result 由原生层在「摆位 + 去边框 + 开始淡入」之后才返回，
@@ -341,21 +365,23 @@ class QNativeWindows extends ChangeNotifier {
     VoidCallback? onDone,
   }) {
     try {
-      _kWindowChannel.invokeMethod<dynamic>(method, args).then(
-        (value) {
-          if (log && kDebugMode) {
-            debugPrint('[QQ] 窗口通道 $method → $value');
-          }
-          onDone?.call();
-        },
-        onError: (Object error, StackTrace stack) {
-          if (kDebugMode) {
-            debugPrint('[QQ] 窗口通道 $method 调用失败：$error');
-          }
-          // 通道异常时也让内容回到正常态，窗口不能被动画卡住。
-          onDone?.call();
-        },
-      );
+      _kWindowChannel
+          .invokeMethod<dynamic>(method, args)
+          .then(
+            (value) {
+              if (log && kDebugMode) {
+                debugPrint('[QQ] 窗口通道 $method → $value');
+              }
+              onDone?.call();
+            },
+            onError: (Object error, StackTrace stack) {
+              if (kDebugMode) {
+                debugPrint('[QQ] 窗口通道 $method 调用失败：$error');
+              }
+              // 通道异常时也让内容回到正常态，窗口不能被动画卡住。
+              onDone?.call();
+            },
+          );
     } catch (_) {
       // 通道未就绪（例如 web）时静默降级。
       onDone?.call();
@@ -397,7 +423,8 @@ class QNativeWindows extends ChangeNotifier {
             child: ListenableBuilder(
               listenable: state,
               builder: (context, _) {
-                final dragH = (e.kind == QWindowKind.panel && state.panelSettings)
+                final dragH =
+                    (e.kind == QWindowKind.panel && state.panelSettings)
                     ? S.settingsBarH
                     : qDragHeight(e.kind);
                 return SizedBox(
@@ -421,6 +448,30 @@ class QNativeWindows extends ChangeNotifier {
                         height: dragH,
                         child: _DragHandle(onDragStart: () => _startDrag(e)),
                       ),
+                      if (e.kind == QWindowKind.panel && state.toast != null)
+                        Positioned(
+                          left: 8,
+                          right: 8,
+                          bottom: 12,
+                          child: IgnorePointer(
+                            child: Center(
+                              child: Container(
+                                padding: const EdgeInsets.all(8),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xE61E2225),
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Text(
+                                  state.toast!,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
                     ],
                   ),
                 );
@@ -453,6 +504,7 @@ class QNativeWindows extends ChangeNotifier {
     _disposed = true;
     qNativeWindowChrome = false;
     state.removeListener(_sync);
+    state.onIncomingNotification = null;
     for (final id in List<String>.from(_windows.keys)) {
       _destroy(id);
     }
@@ -592,10 +644,7 @@ class _WindowRevealState extends State<_WindowReveal>
           opacity: 0.3 + 0.7 * t,
           child: Transform.translate(
             offset: Offset(0, 14 * (1 - t)),
-            child: Transform.scale(
-              scale: 0.97 + 0.03 * t,
-              child: child,
-            ),
+            child: Transform.scale(scale: 0.97 + 0.03 * t, child: child),
           ),
         );
       },

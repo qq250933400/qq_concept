@@ -35,11 +35,21 @@ class QAppState extends ChangeNotifier {
   /// WS 是否已连上（供状态点显示）。
   bool backendConnected = false;
   String displayName = '云帆';
+  String signature = '';
+
+  void Function(String title, String body, String? chatWindowId, bool sound)?
+  onIncomingNotification;
 
   /// 好友数据：API 模式由服务端分组驱动，未接入时用设计稿常量。
   List<QFriend> friends = List<QFriend>.from(kFriends);
   List<QFriendGroup>? friendGroups;
-  final Map<String, bool> presence = <String, bool>{};
+  final Map<String, QPresence> presence = <String, QPresence>{};
+  QPresence myPresence = QPresence.online;
+  bool presenceBusy = false;
+  int _presenceGeneration = 0;
+
+  QPresence get visibleMyPresence =>
+      backend != null && !backendConnected ? QPresence.offline : myPresence;
 
   // ------------------------------------------------------------ 关系链 UI 状态
   List<QContactGroup> contactGroups = <QContactGroup>[];
@@ -65,8 +75,7 @@ class QAppState extends ChangeNotifier {
   String confirmAction = '';
   String confirmTarget = '';
 
-  int get pendingRequestCount =>
-      friendRequests.where((r) => r.pending).length;
+  int get pendingRequestCount => friendRequests.where((r) => r.pending).length;
 
   bool _disposed = false;
 
@@ -111,7 +120,7 @@ class QAppState extends ChangeNotifier {
   bool autoStart = false;
   bool alwaysOnTop = false;
   bool autoHide = false;
-  bool sound = false;
+  bool sound = true;
   bool sendCtrlEnter = true;
 
   bool setting(String key) => switch (key) {
@@ -161,6 +170,13 @@ class QAppState extends ChangeNotifier {
     registerBusy = false;
     registerError = null;
     myAvatarIndex = null;
+    _presenceGeneration++;
+    myPresence = QPresence.online;
+    presenceBusy = false;
+    presence.clear();
+    displayName = '云帆';
+    signature = '';
+    sound = true;
     windows.clear();
     _z = 0;
   }
@@ -377,32 +393,37 @@ class QAppState extends ChangeNotifier {
     registerBusy = true;
     registerError = null;
     _notify();
-    b.register(reg).then(
-      (_) {},
-      onError: (Object error) {
-        registerError = error.toString().replaceFirst('Exception: ', '');
-        flash(registerError!);
-      },
-    ).whenComplete(() {
-      registerBusy = false;
-      _notify();
-    });
+    b
+        .register(reg)
+        .then(
+          (_) {},
+          onError: (Object error) {
+            registerError = error.toString().replaceFirst('Exception: ', '');
+            flash(registerError!);
+          },
+        )
+        .whenComplete(() {
+          registerBusy = false;
+          _notify();
+        });
   }
 
   void _runAuth(Future<void> Function() action) {
     apiBusy = true;
     authError = null;
     _notify();
-    action().then(
-      (_) {},
-      onError: (Object error) {
-        authError = error.toString().replaceFirst('Exception: ', '');
-        flash(authError!);
-      },
-    ).whenComplete(() {
-      apiBusy = false;
-      _notify();
-    });
+    action()
+        .then(
+          (_) {},
+          onError: (Object error) {
+            authError = error.toString().replaceFirst('Exception: ', '');
+            flash(authError!);
+          },
+        )
+        .whenComplete(() {
+          apiBusy = false;
+          _notify();
+        });
   }
 
   /// 后端登录成功后的统一入口（mock 登录也走这里）。
@@ -598,6 +619,16 @@ class QAppState extends ChangeNotifier {
     required List<QFriendGroup> groups,
     required List<QFriend> friends,
   }) {
+    final oldGroup = expandedGroup;
+    if (oldGroup != null) {
+      final index = oldGroup.lastIndexOf('(');
+      final name = index < 0 ? oldGroup : oldGroup.substring(0, index);
+      final matches = groups.where((group) {
+        final end = group.label.lastIndexOf('(');
+        return (end < 0 ? group.label : group.label.substring(0, end)) == name;
+      });
+      expandedGroup = matches.isEmpty ? null : matches.first.label;
+    }
     friendGroups = groups;
     this.friends = friends;
     _notify();
@@ -641,6 +672,20 @@ class QAppState extends ChangeNotifier {
     _notify();
   }
 
+  void setBackendSignature(String value) {
+    if (signature == value) return;
+    signature = value;
+    _notify();
+  }
+
+  void notifyIncoming(String title, String body, {String? friend}) {
+    final chatId = friend == null ? null : 'chat:$friend';
+    final chat = chatId == null ? null : _byId(chatId);
+    final visibleChatId = chat != null && !chat.minimized ? chatId : null;
+    flash(body);
+    onIncomingNotification?.call(title, body, visibleChatId, sound);
+  }
+
   /// 回填当前用户的内置头像下标（`/users/me` 的 avatar_url 解析结果）。
   /// null / 未变化时不通知，避免登录后多余重建。
   void setBackendAvatarIndex(int? index) {
@@ -655,10 +700,51 @@ class QAppState extends ChangeNotifier {
     _notify();
   }
 
-  void setBackendPresence(String name, bool online) {
-    if (presence[name] == online) return;
-    presence[name] = online;
+  void setBackendPresence(String name, QPresence status) {
+    if (presence[name] == status) return;
+    presence[name] = status;
     _notify();
+  }
+
+  void applyBackendPresence(Map<String, QPresence> values) {
+    presence
+      ..clear()
+      ..addAll(values);
+    _notify();
+  }
+
+  void setBackendMyPresence(QPresence status) {
+    if (myPresence == status) return;
+    myPresence = status;
+    _notify();
+  }
+
+  Future<void> changePresence(QPresence status) async {
+    if (presenceBusy) return;
+    final b = backend;
+    if (b != null && !backendConnected) {
+      flash('连接已断开，无法修改在线状态');
+      return;
+    }
+    if (myPresence == status) return;
+    if (b == null) {
+      setBackendMyPresence(status);
+      return;
+    }
+    presenceBusy = true;
+    final generation = _presenceGeneration;
+    _notify();
+    try {
+      await b.setPresence(status);
+      if (generation == _presenceGeneration) setBackendMyPresence(status);
+    } catch (error) {
+      if (generation == _presenceGeneration) flash('修改在线状态失败：$error');
+    } finally {
+      if (generation == _presenceGeneration) {
+        presenceBusy = false;
+        _notify();
+      }
+    }
   }
 
   /// 用服务端历史替换本地列表，但保留尚未被 ack 的乐观消息。
@@ -782,10 +868,7 @@ class QAppState extends ChangeNotifier {
       if (contacts.any((c) => (c.groupId ?? '').isEmpty))
         QFriendGroup(
           '未分组(${contacts.where((c) => (c.groupId ?? '').isEmpty).length}/$total)',
-          contacts
-              .where((c) => (c.groupId ?? '').isEmpty)
-              .map(row)
-              .toList(),
+          contacts.where((c) => (c.groupId ?? '').isEmpty).map(row).toList(),
         ),
     ];
   }
@@ -806,7 +889,8 @@ class QAppState extends ChangeNotifier {
     ];
     return pool
         .where(
-          (u) => u.account.toLowerCase().contains(query) ||
+          (u) =>
+              u.account.toLowerCase().contains(query) ||
               u.name.toLowerCase().contains(query),
         )
         .toList(growable: false);
@@ -905,8 +989,8 @@ class QAppState extends ChangeNotifier {
       for (final c in contacts)
         c.name == name
             ? (target == null
-                ? c.copyWith(clearGroup: true)
-                : c.copyWith(groupId: target))
+                  ? c.copyWith(clearGroup: true)
+                  : c.copyWith(groupId: target))
             : c,
     ];
     _rebuildLocalViews();
@@ -929,20 +1013,25 @@ class QAppState extends ChangeNotifier {
     contactsBusy = true;
     contactsError = null;
     _notify();
-    action().then((_) {
-      if (closeDialog) {
-        contactDialog = QContactDialog.none;
-        dialogTarget = null;
-        dialogTargetName = null;
-      }
-      if (success != null) flash(success);
-    }, onError: (Object error) {
-      contactsError = _errorText(error);
-      flash(contactsError!);
-    }).whenComplete(() {
-      contactsBusy = false;
-      _notify();
-    });
+    action()
+        .then(
+          (_) {
+            if (closeDialog) {
+              contactDialog = QContactDialog.none;
+              dialogTarget = null;
+              dialogTargetName = null;
+            }
+            if (success != null) flash(success);
+          },
+          onError: (Object error) {
+            contactsError = _errorText(error);
+            flash(contactsError!);
+          },
+        )
+        .whenComplete(() {
+          contactsBusy = false;
+          _notify();
+        });
   }
 
   String _errorText(Object error) => error
@@ -969,10 +1058,15 @@ class QAppState extends ChangeNotifier {
     }
     contactsError = null;
     _notify();
-    b.searchContacts(q).then((_) {}, onError: (Object error) {
-      contactsError = _errorText(error);
-      _notify();
-    });
+    b
+        .searchContacts(q)
+        .then(
+          (_) {},
+          onError: (Object error) {
+            contactsError = _errorText(error);
+            _notify();
+          },
+        );
   }
 
   void sendFriendRequest(String account, String message) {
@@ -1024,14 +1118,18 @@ class QAppState extends ChangeNotifier {
   void renameFriendGroup(String id, String name) {
     final trimmed = name.trim();
     final b = backend;
-    _runContacts(() async {
-      if (trimmed.isEmpty) throw StateError('请输入分组名称');
-      if (b == null) {
-        _localRenameGroup(id, trimmed);
-      } else {
-        await b.renameFriendGroup(id, trimmed);
-      }
-    }, success: '分组已重命名', closeDialog: true);
+    _runContacts(
+      () async {
+        if (trimmed.isEmpty) throw StateError('请输入分组名称');
+        if (b == null) {
+          _localRenameGroup(id, trimmed);
+        } else {
+          await b.renameFriendGroup(id, trimmed);
+        }
+      },
+      success: '分组已重命名',
+      closeDialog: true,
+    );
   }
 
   void deleteFriendGroup(String id) {
@@ -1047,24 +1145,32 @@ class QAppState extends ChangeNotifier {
 
   void moveFriend(String name, String? groupId) {
     final b = backend;
-    _runContacts(() async {
-      if (b == null) {
-        _localMoveFriend(name, groupId);
-      } else {
-        await b.moveFriendToGroup(name, groupId);
-      }
-    }, success: '已调整好友分组', closeDialog: true);
+    _runContacts(
+      () async {
+        if (b == null) {
+          _localMoveFriend(name, groupId);
+        } else {
+          await b.moveFriendToGroup(name, groupId);
+        }
+      },
+      success: '已调整好友分组',
+      closeDialog: true,
+    );
   }
 
   void deleteFriend(String name) {
     final b = backend;
-    _runContacts(() async {
-      if (b == null) {
-        _localDeleteFriend(name);
-      } else {
-        await b.deleteFriend(name);
-      }
-    }, success: '已删除好友', closeDialog: true);
+    _runContacts(
+      () async {
+        if (b == null) {
+          _localDeleteFriend(name);
+        } else {
+          await b.deleteFriend(name);
+        }
+      },
+      success: '已删除好友',
+      closeDialog: true,
+    );
   }
 
   // -------------------------------------------------- 好友管理窗口的 UI 状态
@@ -1081,8 +1187,7 @@ class QAppState extends ChangeNotifier {
       searchResults = const <QUserHit>[];
     }
     _notify();
-    if (dialog == QContactDialog.requests ||
-        dialog == QContactDialog.groups) {
+    if (dialog == QContactDialog.requests || dialog == QContactDialog.groups) {
       refreshContacts();
     }
   }
@@ -1153,16 +1258,17 @@ class QAppState extends ChangeNotifier {
   /// 当前分组 + 搜索词过滤后的好友（好友管理页照片卡数据源）。
   List<QContact> get visibleContacts {
     final q = contactsQuery.trim().toLowerCase();
-    return contacts.where((c) {
-      if (selectedGroupId != null &&
-          (c.groupId ?? '') != selectedGroupId) {
-        return false;
-      }
-      if (q.isEmpty) return true;
-      return c.name.toLowerCase().contains(q) ||
-          c.account.toLowerCase().contains(q) ||
-          c.signature.toLowerCase().contains(q);
-    }).toList(growable: false);
+    return contacts
+        .where((c) {
+          if (selectedGroupId != null && (c.groupId ?? '') != selectedGroupId) {
+            return false;
+          }
+          if (q.isEmpty) return true;
+          return c.name.toLowerCase().contains(q) ||
+              c.account.toLowerCase().contains(q) ||
+              c.signature.toLowerCase().contains(q);
+        })
+        .toList(growable: false);
   }
 
   QContact? contactByName(String? name) {

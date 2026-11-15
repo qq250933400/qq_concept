@@ -234,8 +234,7 @@ class _FriendsManagerScreenState extends State<FriendsManagerScreen> {
       );
 
   Widget _toolChip(String label, VoidCallback onTap, double width) =>
-      GestureDetector(
-        behavior: HitTestBehavior.opaque,
+      QButtonInteraction(
         onTap: onTap,
         child: Container(
           width: width,

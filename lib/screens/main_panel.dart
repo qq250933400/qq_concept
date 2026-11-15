@@ -39,6 +39,11 @@ class MainPanel extends StatelessWidget {
     this.friendGroups,
     this.friends,
     this.myAvatarIndex,
+    this.displayName = 'wzw',
+    this.signature = '若不在连，请留言或邮件至',
+    this.myPresence = QPresence.online,
+    this.friendPresence,
+    this.onPresenceChanged,
   });
 
   /// 当前 tab 页索引：0 好友列表 / 1 群组列表 / 2 最近消息。
@@ -79,6 +84,11 @@ class MainPanel extends StatelessWidget {
   /// 当前用户的内置头像下标（`builtin://avatar/N`）。
   /// null（未设置 / 外链 / 画廊）时左上角相框保持 V6.1 默认剪影。
   final int? myAvatarIndex;
+  final String displayName;
+  final String signature;
+  final QPresence myPresence;
+  final Map<String, QPresence>? friendPresence;
+  final ValueChanged<QPresence>? onPresenceChanged;
 
   static const List<Shadow> _headShadow = [
     Shadow(color: Color(0xD9000000), offset: Offset(0, 1), blurRadius: 2),
@@ -182,14 +192,7 @@ class MainPanel extends StatelessWidget {
       Color(0xFF25525C),
       false,
     ),
-    _Group(
-      '慢生活',
-      23,
-      '周末爬山，还差两位',
-      Color(0xFFC8903A),
-      Color(0xFF7A5218),
-      false,
-    ),
+    _Group('慢生活', 23, '周末爬山，还差两位', Color(0xFFC8903A), Color(0xFF7A5218), false),
   ];
 
   /// 最近消息（tab2 / 竹叶页，IconFans 群消息）。
@@ -442,8 +445,11 @@ class MainPanel extends StatelessWidget {
           Positioned(
             left: 12,
             top: 47,
+            width: 120,
             child: Text(
-              'wzw',
+              displayName,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: QText.of(
                 14,
                 weight: FontWeight.w700,
@@ -459,24 +465,7 @@ class MainPanel extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                const GreenDot(size: 11),
-                const SizedBox(width: 5),
-                Text(
-                  '在线',
-                  style: QText.of(
-                    14,
-                    weight: FontWeight.w700,
-                    color: const Color(0xFFF2F6F8),
-                    shadows: _headShadow,
-                  ),
-                ),
-                const SizedBox(width: 5),
-                const QTriangle(
-                  width: 9,
-                  height: 6,
-                  dir: QTriDir.down,
-                  color: Color(0xFFDFE6EA),
-                ),
+                _presenceSelector(),
                 const SizedBox(width: 5),
                 const EnvelopeIcon(width: 17, height: 15),
                 const SizedBox(width: 5),
@@ -504,7 +493,7 @@ class MainPanel extends StatelessWidget {
             top: 64,
             width: 248,
             child: Text(
-              '若不在连，请留言或邮件至',
+              signature,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: QText.of(12, color: QC.sign, shadows: _headShadow),
@@ -514,6 +503,64 @@ class MainPanel extends StatelessWidget {
       ),
     );
   }
+
+  Widget _presenceSelector() {
+    final label = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _presenceDot(myPresence, 11),
+        const SizedBox(width: 5),
+        Text(
+          myPresence.label,
+          style: QText.of(
+            14,
+            weight: FontWeight.w700,
+            color: const Color(0xFFF2F6F8),
+            shadows: _headShadow,
+          ),
+        ),
+        const SizedBox(width: 5),
+        const QTriangle(
+          width: 9,
+          height: 6,
+          dir: QTriDir.down,
+          color: Color(0xFFDFE6EA),
+        ),
+      ],
+    );
+    if (onPresenceChanged == null) return label;
+    return PopupMenuButton<QPresence>(
+      key: const ValueKey('presence-selector'),
+      tooltip: '修改在线状态',
+      padding: EdgeInsets.zero,
+      initialValue: myPresence,
+      onSelected: onPresenceChanged,
+      itemBuilder: (_) => [
+        for (final status in QPresence.values)
+          PopupMenuItem(
+            value: status,
+            child: Row(
+              children: [
+                _presenceDot(status, 11),
+                const SizedBox(width: 8),
+                Text(status.label),
+              ],
+            ),
+          ),
+      ],
+      child: label,
+    );
+  }
+
+  Widget _presenceDot(QPresence status, double size) => Container(
+    width: size,
+    height: size,
+    decoration: BoxDecoration(
+      shape: BoxShape.circle,
+      color: status.color,
+      border: Border.all(color: const Color(0x99FFFFFF), width: 1),
+    ),
+  );
 
   // ---------------------------------------------------------------- 搜索栏 28
   Widget _searchBand() => Positioned(
@@ -572,8 +619,7 @@ class MainPanel extends StatelessWidget {
           Positioned(
             right: 10,
             top: 4,
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
+            child: QButtonInteraction(
               onTap: onAddTap,
               child: const PlusIcon(size: 18),
             ),
@@ -609,8 +655,7 @@ class MainPanel extends StatelessWidget {
                 children: [
                   for (int i = 0; i < 3; i++)
                     Expanded(
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.opaque,
+                      child: QButtonInteraction(
                         onTap: (interactive && onTabChanged != null)
                             ? () => onTabChanged!(i)
                             : null,
@@ -665,11 +710,7 @@ class MainPanel extends StatelessWidget {
             const Positioned.fill(child: BambooBackdrop()),
             TabFlip(
               index: tabIndex,
-              pages: [
-                _friendsPage(groupTap),
-                _groupsPage(),
-                _recentPage(),
-              ],
+              pages: [_friendsPage(groupTap), _groupsPage(), _recentPage()],
             ),
           ],
         ),
@@ -682,7 +723,8 @@ class MainPanel extends StatelessWidget {
   Widget _friendsPage(ValueChanged<String>? groupTap) {
     final q = searchQuery.trim().toLowerCase().replaceAll(' ', '');
     final all = friends ?? _friends;
-    final groups = friendGroups ??
+    final groups =
+        friendGroups ??
         <QFriendGroup>[
           for (final label in _grpLabels) QFriendGroup(label, _friends),
         ];
@@ -717,15 +759,17 @@ class MainPanel extends StatelessWidget {
         children: [
           for (final g in groups) ...[
             _group(
-              g.label,
+              _groupLabel(g),
               open: g.label == openGroup,
               hi: g.label == openGroup,
               onTap: groupTap == null ? null : () => groupTap(g.label),
             ),
             if (g.label == openGroup)
-              for (final f in (q.isEmpty
-                  ? g.members
-                  : g.members.where(matches).toList())) _friendRow(f),
+              for (final f
+                  in (q.isEmpty
+                      ? g.members
+                      : g.members.where(matches).toList()))
+                _friendRow(f),
           ],
         ],
       );
@@ -928,6 +972,9 @@ class MainPanel extends StatelessWidget {
   Widget _friendRow(_Friend f) {
     final bool sel = selectedName == null ? f.sel : selectedName == f.name;
     final open = menuOpen ? null : onFriendTap;
+    final status = friendPresence == null
+        ? null
+        : (friendPresence![f.name] ?? QPresence.offline);
     return QListRow(
       avatar: AvatarPlaceholder(
         size: S.friendAvatar,
@@ -940,8 +987,29 @@ class MainPanel extends StatelessWidget {
       selected: sel,
       trailingTop: sel ? const _Pin() : null,
       trailingTopOffset: const Offset(10, 5),
+      contentRightInset: status == null ? 0 : 44,
+      trailingBottom: status == null
+          ? null
+          : Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _presenceDot(status, 8),
+                const SizedBox(width: 3),
+                Text(status.label, style: QText.of(10, color: status.color)),
+              ],
+            ),
       onOpen: open == null ? null : () => open(f.name),
     );
+  }
+
+  String _groupLabel(QFriendGroup group) {
+    if (friendPresence == null) return group.label;
+    final index = group.label.lastIndexOf('(');
+    final name = index < 0 ? group.label : group.label.substring(0, index);
+    final online = group.members
+        .where((f) => (friendPresence![f.name] ?? QPresence.offline) != QPresence.offline)
+        .length;
+    return '$name($online/${group.members.length})';
   }
 
   // ---------------------------------------------------------------- 滑块栏 26
@@ -1049,9 +1117,9 @@ class MainPanel extends StatelessWidget {
           Positioned(
             left: 5,
             top: 5,
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
+            child: QButtonInteraction(
               onTap: onMainMenuTap,
+              borderRadius: BorderRadius.circular(15),
               child: const PenguinBall(size: 30),
             ),
           ),
@@ -1094,8 +1162,7 @@ class MainPanel extends StatelessWidget {
     width: S.menuW,
     height: S.menuH,
     // 菜单内部点击由本层吸收，不触发外层「点击外部关闭」。
-    child: GestureDetector(
-      behavior: HitTestBehavior.opaque,
+    child: QButtonInteraction(
       onTap: () {},
       child: BlurPanel(
         width: S.menuW,
@@ -1187,8 +1254,7 @@ class MainPanel extends StatelessWidget {
         child: Text(title, style: QText.menuTitle),
       ),
       for (final it in items)
-        GestureDetector(
-          behavior: HitTestBehavior.opaque,
+        QButtonInteraction(
           onTap: onMenuAction == null ? null : () => onMenuAction!(it),
           child: Container(
             height: S.menuItemH,
@@ -1678,8 +1744,11 @@ class _AvatarDecoPainter extends CustomPainter {
       canvas.clipRect(photo);
       canvas.translate(38, 13);
       canvas.scale(1.3, 1.3);
-      QAvatarPainter(avatar.bg, avatar.skin, avatar.hair)
-          .paint(canvas, const Size(40, 40));
+      QAvatarPainter(
+        avatar.bg,
+        avatar.skin,
+        avatar.hair,
+      ).paint(canvas, const Size(40, 40));
       canvas.restore();
     }
 

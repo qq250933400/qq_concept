@@ -20,6 +20,7 @@ class ApiUser {
       nickname = _s(j, 'nickname'),
       avatarUrl = j['avatar_url']?.toString(),
       signature = j['signature']?.toString(),
+      presence = j['presence']?.toString(),
       gender = _i(j['gender']);
 
   final String id;
@@ -27,6 +28,7 @@ class ApiUser {
   final String nickname;
   final String? avatarUrl;
   final String? signature;
+  final String? presence;
 
   /// 0 保密 / 1 男 / 2 女（与 core/profile.dart 的 QGender 对齐）。
   final int gender;
@@ -40,6 +42,7 @@ class ApiFriend {
       account = _s(j, 'account'),
       nickname = _s(j, 'nickname', _s(j, 'account')),
       signature = j['signature']?.toString() ?? '',
+      presence = j['presence']?.toString(),
       status = _i(j['status']);
 
   final String id;
@@ -48,6 +51,7 @@ class ApiFriend {
   final String account;
   final String nickname;
   final String signature;
+  final String? presence;
   final int status;
 }
 

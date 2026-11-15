@@ -6,6 +6,24 @@ import 'tokens.dart';
 /// 主面板四态（默认/好友/菜单/竹叶）是一个窗口的四种内部状态。
 enum QWindowKind { login, register, panel, chat, friendsManager, settings, about }
 
+enum QPresence {
+  online('在线', Color(0xFF61C847)),
+  offline('离线', Color(0xFF929BA2)),
+  away('离开', Color(0xFFE6B84A)),
+  busy('忙碌', Color(0xFFE85C50));
+
+  const QPresence(this.label, this.color);
+  final String label;
+  final Color color;
+
+  static QPresence? parse(String? value) {
+    for (final status in values) {
+      if (status.name == value) return status;
+    }
+    return null;
+  }
+}
+
 String qWindowTitle(QWindowKind kind, [String? friend]) => switch (kind) {
   QWindowKind.login => '登录',
   QWindowKind.register => '注册',

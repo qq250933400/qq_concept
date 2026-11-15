@@ -202,17 +202,26 @@ NO_PROXY=127.0.0.1,localhost flutter test \
 | 注册 | 登录窗「注册新帐号」打开独立注册窗口（480×470），字段：登录帐号 / 用户昵称 / 登录密码 / 重复密码 / 性别 / 内置头像；`POST /auth/register` 提交昵称 + `gender` + `builtin://avatar/N`，成功即登录进主面板，头像显示在左上角相框 |
 | 好友分组 | `GET /friends` → `QFriendGroup` + `QFriend` + `QContactGroup`/`QContact`；同名好友沿用设计稿配色，新好友按名字取稳定色 |
 | 添加好友 / 申请 | `GET /users/search` → `POST /friend-requests` → `GET /friend-requests?direction=in\|out` → `accept` / `reject`；通过后自动重拉好友列表 |
-| 关系链实时通知 | 服务端 `friend_request.new` / `friend.accepted` / `friend_request.rejected` / `friend.deleted` 通过 WS 跨节点广播，客户端收到即 toast 提示并自动重拉关系链，无需重开窗口 |
+| 关系链实时通知 | 服务端 `friend_request.new` / `friend.accepted` / `friend_request.rejected` / `friend.deleted` 通过 WS 跨节点广播，客户端收到后自动重拉关系链；连接及重连后也会刷新 |
 | 分组管理 | `POST /friend-groups`、`PATCH /friend-groups/{id}`（改名）、`DELETE /friend-groups/{id}`（好友回落未分组） |
 | 移动 / 删除好友 | `PATCH /friends/{userId}`（`group_id` 可为 `null`）、`DELETE /friends/{userId}` |
 | 会话 / 历史 / 已读 | 开窗时取或建单聊、拉 `limit=50` 历史并 `markRead`；`QMessage` 带 `seq` / `clientMsgId` / `pending` |
-| 实时收发 | WS `msg.send` → 乐观插入 → `msg.ack` 确认；`msg.new` 按 `conversation_id` 路由到对应聊天窗 |
+| 实时收发 | WS `msg.send` → 乐观插入 → `msg.ack` 确认；`msg.new` 按 `conversation_id` 路由到对应聊天窗，首次收到新会话也会提示 |
 | 断线补偿 | `ready.seqs` 与本地 seq 比较，`after_seq` 补洞；WS 断线期间帧排队、指数退避重连（任意实例均可） |
 | 设置 | 设置页保存时一次 `PUT /settings`；登录时 `GET /settings` 回填 |
-| 顶号 / 在线 | `kick` 直接回登录窗并提示；`presence` 存入 `state.presence` |
+| 顶号 / 在线 | `kick` 直接回登录窗并提示；主面板可切换在线、离线、离开、忙碌，好友列表显示实时状态和分组在线数 |
 
 macOS 已加 `NSAppTransportSecurity/NSAllowsLocalNetwork`（放行本机明文 HTTP）
 与 `com.apple.security.network.client`（沙箱出站）；生产应改用 HTTPS。
+
+macOS 独立窗口模式下，好友申请和通过提示使用系统通知；收到好友消息时，
+已打开且未最小化的聊天窗会抖动，否则使用系统通知。首次通知需授权；
+声音默认开启，可在设置中关闭。通知权限被拒绝时请在 macOS 系统设置中开启。
+其他平台的画布模式仍使用应用内提示，不提供系统通知或窗口抖动。
+
+状态中的「离线」仅对好友隐藏在线状态，不会退出登录或停止接收消息；
+状态在同账号设备间同步，断线时显示为离线。服务端在 Redis 中保留所选状态，
+最后一次在线活动后保留 24 小时。使用此功能需要更新并重启 `qq-server`。
 服务不可达时登录失败会在登录窗底部内联显示错误，不会偷偷进入假数据主面板。
 
 ## 注册窗口

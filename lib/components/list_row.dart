@@ -40,6 +40,7 @@ class QListRow extends StatefulWidget {
     this.height = S.friendRowH,
     this.titleColor = QC.fname,
     this.subtitleColor = QC.fsig,
+    this.contentRightInset = 0,
   });
 
   /// 头像内容（放进 [QAvatarChip]）。
@@ -60,6 +61,7 @@ class QListRow extends StatefulWidget {
   final double height;
   final Color titleColor;
   final Color subtitleColor;
+  final double contentRightInset;
 
   @override
   State<QListRow> createState() => _QListRowState();
@@ -119,6 +121,8 @@ class _QListRowState extends State<QListRow> {
                   ],
                 ),
               ),
+              if (widget.contentRightInset > 0)
+                SizedBox(width: widget.contentRightInset),
             ],
           ),
           if (widget.trailingTop != null)

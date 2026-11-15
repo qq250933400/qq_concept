@@ -110,12 +110,10 @@ class QBuiltinAvatarChip extends StatelessWidget {
         child: AvatarPlaceholder(size: size, bg: p.bg, skin: p.skin, hair: p.hair),
       ),
     );
-    return onTap == null
-        ? body
-        : GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: onTap,
-            child: body,
-          );
+    return QButtonInteraction(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(size),
+      child: body,
+    );
   }
 }

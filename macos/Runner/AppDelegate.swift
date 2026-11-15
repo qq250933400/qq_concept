@@ -1,6 +1,19 @@
 import Cocoa
 import FlutterMacOS
 import ObjectiveC
+import UserNotifications
+
+private class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
+  func userNotificationCenter(_ center: UNUserNotificationCenter,
+                              willPresent notification: UNNotification,
+                              withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+    if #available(macOS 11.0, *) {
+      completionHandler([.banner])
+    } else {
+      completionHandler([.alert])
+    }
+  }
+}
 
 /// 窗口化（Desktop Windowing）启动方式：
 /// 所有 NSWindow 都由 Dart 侧的 WindowController 创建，不能在 nib 里
@@ -17,6 +30,8 @@ import ObjectiveC
 class AppDelegate: FlutterAppDelegate {
   var engine: FlutterEngine?
   private var windowChannel: FlutterMethodChannel?
+  private let notificationDelegate = NotificationDelegate()
+  private var shakingWindows = Set<ObjectIdentifier>()
 
   /// 最近一次 leftMouseDown。performWindowDragWithEvent: 要求传「原始
   /// mouseDown 事件」，而 Dart 侧的拖动判定要等位移超过阈值才触发，
@@ -52,6 +67,7 @@ class AppDelegate: FlutterAppDelegate {
   private static var showHookInstalled = false
 
   override func applicationDidFinishLaunching(_ notification: Notification) {
+    UNUserNotificationCenter.current().delegate = notificationDelegate
     engine = FlutterEngine(name: "project", project: nil)
     // 必须早于引擎创建任何 NSWindow，否则拦不住首帧那一次显示。
     installWindowShowHook()
@@ -75,6 +91,31 @@ class AppDelegate: FlutterAppDelegate {
   }
 
   private func handleWindowCall(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+    if call.method == "notify" {
+      guard let args = call.arguments as? [String: Any],
+            let title = args["title"] as? String,
+            let body = args["body"] as? String else {
+        result(FlutterError(code: "INVALID_NOTIFICATION", message: "通知内容无效", details: nil))
+        return
+      }
+      if (args["sound"] as? Bool) == true {
+        if let sound = NSSound(named: NSSound.Name("Glass")) {
+          sound.play()
+        } else {
+          NSSound.beep()
+        }
+      }
+      if let address = args["handle"] as? NSNumber,
+         let pointer = UnsafeMutableRawPointer(bitPattern: UInt(truncatingIfNeeded: address.int64Value)),
+         let window = NSApp.windows.first(where: { Unmanaged.passUnretained($0).toOpaque() == pointer }),
+         window.isVisible, !window.isMiniaturized {
+        shake(window)
+        result(nil)
+      } else {
+        showNotification(title: title, body: body, result: result)
+      }
+      return
+    }
     guard let args = call.arguments as? [String: Any],
           let address = args["handle"] as? NSNumber,
           let pointer = UnsafeRawPointer(
@@ -82,6 +123,7 @@ class AppDelegate: FlutterAppDelegate {
       result(FlutterMethodNotImplemented)
       return
     }
+
     let window = Unmanaged<NSWindow>.fromOpaque(pointer).takeUnretainedValue()
 
     switch call.method {
@@ -123,6 +165,52 @@ class AppDelegate: FlutterAppDelegate {
       result(nil)
     default:
       result(FlutterMethodNotImplemented)
+    }
+  }
+
+  private func shake(_ window: NSWindow) {
+    let id = ObjectIdentifier(window)
+    guard window.isVisible, !window.isMiniaturized, !shakingWindows.contains(id) else { return }
+    shakingWindows.insert(id)
+    let origin = window.frame.origin
+    let offsets: [CGFloat] = [-8, 8, -6, 6, -3, 3, 0]
+    for (index, offset) in offsets.enumerated() {
+      DispatchQueue.main.asyncAfter(deadline: .now() + Double(index) * 0.045) { [weak self, weak window] in
+        guard let self else { return }
+        guard let window, window.isVisible, !window.isMiniaturized else {
+          self.shakingWindows.remove(id)
+          return
+        }
+        window.setFrameOrigin(NSPoint(x: origin.x + offset, y: origin.y))
+        if index == offsets.count - 1 { self.shakingWindows.remove(id) }
+      }
+    }
+  }
+
+  private func showNotification(title: String, body: String, result: @escaping FlutterResult) {
+    let center = UNUserNotificationCenter.current()
+    center.requestAuthorization(options: [.alert]) { granted, error in
+      guard granted, error == nil else {
+        DispatchQueue.main.async {
+          result(FlutterError(code: "NOTIFICATION_DENIED",
+                              message: "请在系统设置中允许 QQ 通知", details: error?.localizedDescription))
+        }
+        return
+      }
+      let content = UNMutableNotificationContent()
+      content.title = title
+      content.body = body
+      center.add(UNNotificationRequest(identifier: UUID().uuidString,
+                                       content: content, trigger: nil)) { error in
+        DispatchQueue.main.async {
+          if let error {
+            result(FlutterError(code: "NOTIFICATION_FAILED",
+                                message: error.localizedDescription, details: nil))
+          } else {
+            result(nil)
+          }
+        }
+      }
     }
   }
 

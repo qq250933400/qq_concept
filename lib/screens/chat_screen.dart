@@ -104,8 +104,7 @@ class ChatScreen extends StatelessWidget {
             Positioned(
               left: 336,
               top: 26,
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
+              child: QButtonInteraction(
                 onTap: onFolderTap,
                 child: _bigIcon(folder: true),
               ),
@@ -113,8 +112,7 @@ class ChatScreen extends StatelessWidget {
             Positioned(
               left: 375,
               top: 30,
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
+              child: QButtonInteraction(
                 onTap: onMailTap,
                 child: _bigIcon(folder: false),
               ),
@@ -609,8 +607,8 @@ class _ChatComposerState extends State<_ChatComposer> {
           bottom: 12,
           width: S.chatSendW,
           height: S.chatSendH,
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
+          child: QButtonInteraction(
+            key: const ValueKey('chat-send-button'),
             onTap: _submit,
             child: widget.sendButton,
           ),

@@ -179,6 +179,10 @@ class QApiClient {
   Future<ApiUser> me() async =>
       ApiUser.fromJson(await _request('GET', '/users/me'));
 
+  Future<void> setPresence(String status) async {
+    await _request('PUT', '/users/me/presence', body: {'status': status});
+  }
+
   Future<Map<String, dynamic>> updateMe({
     String? nickname,
     String? signature,
